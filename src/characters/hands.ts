@@ -148,18 +148,18 @@ function rightState(pose: HandsPose, a: number, t: number, auto: boolean): HandS
       return { pos: [0.24, -0.29, -0.42], rot: [0.55, 0.35, 0.35], wrist: [-0.2, 0, 0], curl: 0.45, thumb: 0.3 };
     case 'reach': {
       const e = auto ? 1 : a;
-      return { pos: [0.18 - 0.04 * e, -0.24 + 0.08 * e, -0.44 - 0.18 * e], rot: [0.3 - 0.15 * e, 0.2, 1.25], wrist: [-0.1, 0, 0], curl: 0.3 - 0.25 * e, thumb: 0.1 };
+      return { pos: [0.19 - 0.06 * e, -0.25 + 0.06 * e, -0.44 - 0.2 * e], rot: [0.55, 0.25, 1.2], wrist: [-0.1, 0.35, 0], curl: 0.3 - 0.22 * e, thumb: 0.1 };
     }
     case 'hold':
-      return { pos: [0.2, -0.23, -0.42], rot: [0.45, 0.3, 0.2], wrist: [-1.0, 0, 0], curl: 1, thumb: 0.9 };
+      return { pos: [0.19, -0.23, -0.45], rot: [0.62, 0.3, 0.2], wrist: [-1.15, 0, 0], curl: 1, thumb: 0.9 };
     case 'chop': {
       // a: 0 = knife raised, 1 = blade down on the board
       const d = auto ? Math.pow(Math.abs(sn(t * 6)), 0.6) : a;
-      return { pos: [0.16, -0.13 - 0.15 * d, -0.46], rot: [0.35, 0.25, 0.25], wrist: [-1.6 - 0.55 * d, 0, 0], curl: 1, thumb: 0.9 };
+      return { pos: [0.16, -0.14 - 0.14 * d, -0.5], rot: [0.62, 0.25, 0.25], wrist: [-1.85 - 0.55 * d, 0, 0], curl: 1, thumb: 0.9 };
     }
     case 'shake': {
       const ph = auto ? t * 20 : a * Math.PI * 2;
-      return { pos: [0.13, -0.12 + 0.025 * sn(ph), -0.45], rot: [0.4, 0.2, 0.4], wrist: [-2.7 + 0.3 * sn(ph), 0, 0], curl: 1, thumb: 0.9 };
+      return { pos: [0.13, -0.13 + 0.025 * sn(ph), -0.5], rot: [0.62, 0.2, 0.4], wrist: [-2.9 + 0.3 * sn(ph), 0, 0], curl: 1, thumb: 0.9 };
     }
     case 'flip': {
       let f: number;
@@ -167,11 +167,11 @@ function rightState(pose: HandsPose, a: number, t: number, auto: boolean): HandS
         const u = (t % 1.0) / 1.0;
         f = u < 0.18 ? u / 0.18 : Math.max(0, 1 - (u - 0.18) / 0.3);
       } else f = sn(Math.PI * a);
-      return { pos: [0.15, -0.26 + 0.07 * f, -0.48 + 0.03 * f], rot: [0.45, 0.25, 0.15], wrist: [-1.55 + 0.75 * f, 0, 0], curl: 1, thumb: 0.9 };
+      return { pos: [0.15, -0.26 + 0.07 * f, -0.5 + 0.03 * f], rot: [0.62, 0.25, 0.15], wrist: [-1.72 + 0.75 * f, 0, 0], curl: 1, thumb: 0.9 };
     }
     case 'stir': {
       const ph = auto ? t * 6 : a * Math.PI * 2;
-      return { pos: [0.12 + 0.045 * Math.cos(ph), -0.27, -0.5 + 0.045 * sn(ph)], rot: [0.5, 0.2, 0.3], wrist: [-2.5, 0, 0], curl: 1, thumb: 0.9 };
+      return { pos: [0.12 + 0.045 * Math.cos(ph), -0.27, -0.52 + 0.045 * sn(ph)], rot: [0.62, 0.2, 0.3], wrist: [-2.62, 0, 0], curl: 1, thumb: 0.9 };
     }
     case 'raisePan': {
       const e = auto ? 1 : a;
@@ -186,8 +186,8 @@ function rightState(pose: HandsPose, a: number, t: number, auto: boolean): HandS
     case 'cover': {
       const e = auto ? 1 : a;
       return {
-        pos: [0.24 - 0.17 * e, -0.29 + 0.27 * e, -0.42 + 0.16 * e],
-        rot: [0.55 + 1.0 * e, 0.35 - 0.25 * e, 0.35 - 1.85 * e],
+        pos: [0.24 - 0.15 * e, -0.29 + 0.1 * e, -0.42 + 0.09 * e],
+        rot: [0.55 + 0.85 * e, 0.35 - 0.25 * e, 0.35 - 1.75 * e],
         wrist: [0.15 * e, 0, 0],
         curl: 0.45 - 0.35 * e,
         thumb: 0.3 - 0.2 * e,

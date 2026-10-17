@@ -162,7 +162,7 @@ function buildTracks(u: Utterance) {
         let sp = d.burst.spec;
         if (s.ph === 'K' || s.ph === 'G') {
           const f2 = nextVowelF2(segs, i);
-          sp = { ...sp, f1: Math.max(1400, Math.min(3200, f2 * 1.1)) };
+          sp = { ...sp, f1: Math.max(1200, Math.min(3000, f2 * 1.15)) };
         }
         fric.add(st, specArr(sp)); fric.add(en, specArr(sp));
       }

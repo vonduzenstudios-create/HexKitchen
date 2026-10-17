@@ -814,10 +814,10 @@ export function buildGorgon(): GorgonRig {
     eyeMat.color.copy(off ? EYE_OFF : EYE_NORMAL).lerp(EYE_GLOW, e);
     for (const p of pupils) p.visible = e < 0.35 && !off;
     for (const ey of eyes) ey.scale.set(1 + e * 0.15, 1 + e * 0.9, 1);
-    haloMat.opacity = e;
+    haloMat.opacity = e * 0.85;
     for (const h of halos) {
       h.visible = e > 0.02;
-      h.scale.setScalar(0.06 + e * 0.16);
+      h.scale.setScalar(0.04 + e * 0.08);
     }
     coneMat.opacity = e * e * 0.14;
     glowCone.visible = e > 0.05;
