@@ -133,7 +133,12 @@ export function buildObjectives(tickets: Ticket[], stations: Stations, items: It
         const on = !!item && !!item.carrier && item.carrier.kind === comp.onto;
         add(`Wrap the ${name} in the ${base}`, on || !!onPlate, `Hold the ${name} and click the ${base}. When everything is on, it wraps itself`);
       }
-      add(`Put the ${name} on ${plateName} at the pass`, !!onPlate, `The pass is the counter on the right. ${plateName} is the ${t.plate === 'plateA' ? 'back' : 'front'} one`);
+      const baked = comp.steps.includes('bake') || t.recipe.components.some((c) => c.onto === comp.kind && c.steps.includes('bake'));
+      const where = `${plateName} is the ${t.plate === 'plateA' ? 'back' : 'front'} one`;
+      const hint = baked
+        ? `Take the tray out (mitts on), carry it to the pass and click ${plateName}: the food slides onto the plate. ${where}`
+        : `The pass is the counter with the service bell. ${where}`;
+      add(`Put the ${name} on ${plateName} at the pass`, !!onPlate, hint);
     }
     const ready = slots.length > 0 && slots.every((s) => s.item);
     add2(lines, ready);

@@ -229,7 +229,17 @@ export class Interaction {
   }
 
   /** Put the held item somewhere specific (station, hook, assembly base, tray). 'refused' keeps it in hand. */
-  private releaseInto(): boolean | 'refused' {
+  /** The food on the held tray that belongs on this plate (its ticket has a free slot for it). */
+  trayDishFor(plate: PlateId): Item | null {
+    const tray = this.held;
+    if (!tray || tray.kind !== 'tray') return null;
+    const p = this.stations.plates[plate];
+    const food = tray.carried.filter((c) => c.isIngredient && this.stations.canPlace(plate, c));
+    if (!p.ticket) return food[0] ?? null;
+    return food.find((c) => p.slots.some((sl) => !sl.item && !sl.part && sl.kind === c.kind)) ?? null;
+  }
+
+  private releaseInto(): boolean | 'refused' | 'kept' {
     const it = this.held;
     const t = this.target;
     if (!it || !t) return false;
@@ -269,6 +279,14 @@ export class Interaction {
       return true;
     }
     const st = this.targetStation(t);
+    // Holding a tray at the pass: slide the right food off it onto the plate, keep the tray.
+    if (it.kind === 'tray' && (st === 'plateA' || st === 'plateB')) {
+      const dish = this.trayDishFor(st);
+      if (!dish) return 'refused';
+      dish.detach();
+      this.stations.place(st, dish, t.point);
+      return 'kept';
+    }
     if (st && this.stations.canPlace(st, it)) {
       this.held = null;
       this.stations.place(st, it, t.point);
@@ -492,12 +510,17 @@ export class Interaction {
           if (this.held.kind === 'tray') return this.stations.canPlace('oven', this.held) ? 'Click: slide the tray into the oven' : 'The oven already has a tray in it';
           return 'Only trays go in the oven: put the food on a sheet tray first';
         }
+        if (this.held.kind === 'tray' && (st === 'plateA' || st === 'plateB')) {
+          if (!this.stations.hasPlate[st]) return 'Put a clean plate here first (stack at the back of the pass)';
+          const dish = this.trayDishFor(st);
+          return dish ? `Click: slide the ${dish.name.toLowerCase()} onto the plate` : this.held.carried.length ? "Nothing on this tray belongs on that plate" : 'The tray is empty';
+        }
         if (this.stations.canPlace(st, this.held)) return `Click: place ${this.held.name}`;
         if (this.stations.isBurning(st)) return "It's ON FIRE! Grab the extinguisher by the stove";
         if ((st === 'plateA' || st === 'plateB') && !this.stations.hasPlate[st]) return 'Put a clean plate here first (stack at the back of the pass)';
         return 'That spot is full';
       }
-      if (this.held.kind === 'tray') return `Holding ${this.held.name}  ·  Click a counter to set it down  ·  Don't drop it!`;
+      if (this.held.kind === 'tray') return `Holding ${this.held.name}  ·  Click a plate at the pass to serve from it, or a counter to set it down`;
       return `Holding ${this.held.name}  ·  Click: drop`;
     }
     if (!t) return '';

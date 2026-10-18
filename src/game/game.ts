@@ -737,7 +737,11 @@ export class Game {
     this.items.update();
     this.checkTrashToss();
     this.hotel?.update(dt);
-    this.assemblyPreview.update(dt, playing ? this.interact.held : null, this.items);
+    // A loaded tray in hand lights up the plates its food can slide onto.
+    const plateSpots = playing && this.interact.held?.kind === 'tray'
+      ? (['plateA', 'plateB'] as const).filter((p) => this.interact.trayDishFor(p)).map((p) => this.kitchen.stations[p].clone().setY(COUNTER_TOP + 0.04))
+      : [];
+    this.assemblyPreview.update(dt, playing ? this.interact.held : null, this.items, plateSpots);
     this.updateShelf(dt, playing);
     if ((this.sprayT -= dt) <= 0 && this.sprayLoop) {
       this.sprayLoop.stop();

@@ -141,7 +141,7 @@ export class AssemblyPreview {
 
   constructor(private scene: THREE.Scene) {}
 
-  update(dt: number, held: Item | null, items: Items): void {
+  update(dt: number, held: Item | null, items: Items, spots: THREE.Vector3[] = []): void {
     this.time += dt;
     const targets: { base: Item; part: Part }[] = [];
     if (held?.isIngredient) {
@@ -151,7 +151,8 @@ export class AssemblyPreview {
         if (part) targets.push({ base: it, part });
       }
     }
-    while (this.rings.length < targets.length) {
+    const total = targets.length + spots.length;
+    while (this.rings.length < total) {
       const r = new THREE.Mesh(new THREE.RingGeometry(0.035, 0.05, 24), this.mat);
       r.renderOrder = 5;
       (r.material as THREE.Material).depthTest = false;
@@ -161,7 +162,15 @@ export class AssemblyPreview {
     this.mat.opacity = 0.45 + 0.35 * Math.sin(this.time * 6);
     this.rings.forEach((r, i) => {
       const t = targets[i];
-      r.visible = !!t;
+      const spot = spots[i - targets.length];
+      r.visible = !!t || !!spot;
+      if (spot) {
+        // Plates a held tray can serve onto: a big ring around the plate.
+        r.position.copy(spot);
+        r.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+        r.scale.setScalar(3 + 0.3 * Math.sin(this.time * 6));
+        return;
+      }
       if (!t) return;
       const p = new THREE.Vector3(...t.part.offset).add(new THREE.Vector3(0, 0.03, 0));
       t.base.group.localToWorld(p);
