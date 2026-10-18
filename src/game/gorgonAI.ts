@@ -66,6 +66,9 @@ export class GorgonAI {
   private gazeFlags = { caught: false, mistimed: false, reflected: false };
   private sabotageStation = '';
   private lastSabotage = -999;
+  /** Seconds left in a dropped-food meltdown. */
+  private tantrumT = 0;
+  private tantrumBeat = 0;
   private speakingUntil = 0;
   private clock = 0;
   private hissT = 4;
@@ -92,6 +95,18 @@ export class GorgonAI {
     this.world.subtitle(text, dur + 0.6);
     voice.say(text, { pos: this.eye(), growl: 0.35 + this.anger * 0.4 }).catch(() => {});
     return dur;
+  }
+
+  /** Dropped food: he stops dead, stomps, slams the air and screams. Only while patrolling. */
+  tantrum(): boolean {
+    if (this.state !== 'patrol' || this.tantrumT > 0) return false;
+    this.tantrumT = 2.6;
+    this.tantrumBeat = 0;
+    this.path = [];
+    this.faceToward(this.world.playerEye());
+    this.say('dropped', 2);
+    audio.play('hiss', { pos: this.eye(), volume: 1 });
+    return true;
   }
 
   sayAsync(keyOrText: LineKey | string, isText = false): Promise<void> {
@@ -394,6 +409,25 @@ export class GorgonAI {
           this.stepAcc = 0;
           audio.play('footstep', { pos: this.pos, volume: 0.9, pitch: 0.9 + Math.random() * 0.15 });
         }
+      }
+    }
+    if (this.tantrumT > 0) {
+      this.tantrumT -= dt;
+      if (this.state !== 'patrol') this.tantrumT = 0;
+      else {
+        this.path = [];
+        lookAt = eyeP;
+        this.faceToward(eyeP);
+        this.anger = 1;
+        // Stomp-slam rhythm: each beat shakes the kitchen.
+        this.tantrumBeat -= dt;
+        if (this.tantrumBeat <= 0) {
+          this.tantrumBeat = 0.42;
+          audio.play('clang', { pos: this.pos, volume: 0.8, pitch: 0.6 + Math.random() * 0.2 });
+          audio.play('footstep', { pos: this.pos, volume: 1, pitch: 0.7 });
+          this.world.shake(0.55);
+        }
+        pose = Math.floor(this.tantrumT / 0.42) % 2 === 0 ? 'slam' : 'yell';
       }
     }
     if (walking && pose === 'idle') pose = 'walk';

@@ -174,6 +174,9 @@ export const LINES: Record<LineKey, string[]> = {
     "Butterfingers!",
     "Gravity one, you nil!",
     "Is the floor HUNGRY?",
+    "NO! NO! That was FOOD! Now it's FLOOR!",
+    "You DROPPED it? On MY floor? Get OUT! No, stay, and PICK IT UP!",
+    "I've seen pigeons with better grip than you!",
   ],
   hitByFood: [
     "Did you just THROW food at me? In MY kitchen?",

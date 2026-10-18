@@ -267,9 +267,14 @@ export class Game {
   private onFloor(it: Item): void {
     if (this.phase !== 'playing') return;
     this.stats.dropped++;
-    this.addWrath(3);
-    if (Math.random() < 0.5) this.gorgonSay('dropped');
-    this.react('laugh', 0.4);
+    // Dropping food is the one thing he can't stand: a full meltdown and a big jump in Wrath.
+    if (this.gorgon.tantrum()) {
+      this.addWrath(10);
+      this.react('gasp', 0.8);
+    } else {
+      this.addWrath(5);
+      this.gorgonSay('dropped', false, 2);
+    }
     void it;
   }
 
