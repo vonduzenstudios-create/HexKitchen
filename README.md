@@ -25,8 +25,9 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 | Right click | Raise the polished pan (hanging by the cutting board) to reflect Gorgon's gaze |
 | Space or C | Crouch behind counters for cover |
 | E | Serve the plate you're looking at, or every plate when near the pass |
+| Click a counter | Set what you're holding down there (leaving things lying about counts as mess) |
 | Q | Drop what you're holding |
-| F | Take off the oven mitts (needed for hot pans, pots and the fryer; clumsy for chopping) |
+| F | Take off the oven mitts and hang them back up (click the hook to put them on). Needed for hot pans, pots, the fryer and the oven, but they make chopping, seasoning and flipping much harder |
 | Hold click with the extinguisher | Spray it at a fire |
 | Plating Mode | Mouse moves the cursor; click picks up and sets down, scroll rotates, right-click or 1-4 switches tool (arrange, sauce, garnish, wipe), Shift for fine control, E to finish |
 
@@ -48,11 +49,15 @@ The **What to do** list on the right walks you through each dish one step at a t
 
 **Chaos.** Dropped plates shatter, an unattended pan or fryer catches fire and spreads along the counter (use the extinguisher), sprinting into the rickety shelf knocks its ingredients everywhere, and grabbing hot food without oven mitts burns you.
 
+**Judging.** At the end of every round Gorgon tastes every contestant's dish. Yours has to clear the **pass mark**, which rises with his Wrath, and beat at least one rival. The worst cook in the kitchen is turned to stone, and if that's you, the run is over. From round 2 on he sometimes misses a flaw, but a diner will send the dish back.
+
+**Mess.** Dropped food and kit stay where they fall, and anything left lying on a counter counts too. The Mess meter shows it, and whatever Gorgon can see raises his Wrath until you bin it or put it away. Pick dropped food up within five seconds and the dish only takes a small hit, unless he watched you do it.
+
 **Wrath stages** (Calm, Irritated, Furious, Petrifying Rage) change how Gorgon behaves: he hears loud noises from further away, walks over to investigate, and loses it if he finds a mess. His gaze always gets a warning ring around the crosshair: hide, look away or reflect it.
 
 **Gorgon's Wrath** rises with bad dishes, burnt food, dropped food and fires, and makes his interruptions more frequent. **Petrification** rises when you fail dishes or meet his gaze; at 100% you become a statue. Perfect dishes calm him and chip the stone away.
 
-His interruptions: **inspections** (turn around and show him what you're holding), the **petrifying gaze** (look away, hide behind a counter, or reflect it with the polished pan right as it lands), **sabotage** (he knocks food off your station or bins your plate), and **Stone Cold** (after each round he petrifies a rival, whose statue stays in your kitchen).
+His interruptions: **inspections** (turn around and show him what you're holding), the **petrifying gaze** (look away, hide behind a counter, or reflect it with the polished pan right as it lands), **sabotage** (he knocks food off your station or bins your plate). Frozen rivals stay in your kitchen as statues.
 
 ### Episode 2: The Last Resort
 

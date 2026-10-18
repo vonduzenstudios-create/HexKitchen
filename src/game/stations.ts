@@ -532,8 +532,10 @@ export class Stations {
         this.chopArmed = false;
         const phase = (this.time % BEAT) / BEAT;
         const dist = Math.min(phase, 1 - phase);
-        let q = Math.max(0, Math.min(1, 1 - Math.max(0, dist - 0.07) * 2.6));
-        if (this.mittsOn) q *= 0.45;
+        // Oven mitts shrink the beat window to a sliver and blunt even a perfect cut.
+        let q = this.mittsOn
+          ? Math.max(0, Math.min(1, 1 - Math.max(0, dist - 0.015) * 6)) * 0.6
+          : Math.max(0, Math.min(1, 1 - Math.max(0, dist - 0.07) * 2.6));
         item.cook.chopHits++;
         item.cook.chopScoreSum += q;
         const col = INGREDIENTS[item.kind as keyof typeof INGREDIENTS].raw;
@@ -560,14 +562,15 @@ export class Stations {
       const sign = Math.sign(dx);
       if (Math.abs(dx) > 5 && sign !== 0 && sign !== this.lastDxSign) {
         this.lastDxSign = sign;
-        item.cook.season += 0.045;
+        // In oven mitts you can't feel the shaker: every shake is a guess.
+        item.cook.season += this.mittsOn ? 0.015 + Math.random() * 0.09 : 0.045;
         this.particles.emit(item.group.position.clone().setY(COUNTER_TOP + 0.45), { color: Math.random() < 0.5 ? 0xffffff : 0x333333, count: 6, up: -0.2, speed: 0.12, gravity: 2.5, life: 0.8, jitter: 0.06 });
         if (this.shakeSoundCd <= 0) {
           audio.play('shake', { pos: item.group.position, volume: 0.7 });
           this.shakeSoundCd = 0.09;
         }
         // Shaking like a maniac can pop the lid off.
-        if (Math.abs(dx) > 70 && Math.random() < 0.07) {
+        if (Math.abs(dx) > (this.mittsOn ? 35 : 70) && Math.random() < (this.mittsOn ? 0.12 : 0.07)) {
           item.cook.season += 0.6;
           this.particles.emit(item.group.position.clone().setY(COUNTER_TOP + 0.4), { color: 0xffffff, count: 60, up: 0.2, speed: 0.4, gravity: 3, life: 1.5, jitter: 0.1 });
           audio.play('clang', { pos: item.group.position });
@@ -591,6 +594,11 @@ export class Stations {
           this.events.flipFail(item);
           return 1;
         }
+        if (this.mittsOn && Math.random() < 0.3) {
+          // Mitts fumble the pan handle: a clatter and no flip.
+          audio.play('clang', { pos: item.group.position, volume: 0.7, pitch: 0.8 });
+          return 0.5;
+        }
         item.anim.flip = 1;
         item.anim.flipSide = 1 - item.anim.flipSide;
         audio.play('flip', { pos: item.group.position });
@@ -611,7 +619,7 @@ export class Stations {
         if (item.cook.chopped) return { title: item.name, hint: 'Chopped! Grab it', value: 1, max: 1 };
         return {
           title: `Chopping ${item.name}`,
-          hint: 'Hold click, swipe DOWN on the beat',
+          hint: this.mittsOn ? 'Clumsy in oven mitts! Press F to take them off' : 'Hold click, swipe DOWN on the beat',
           value: item.cook.chopHits,
           max: CHOPS_NEEDED,
           beat: 1 - (this.time % BEAT) / BEAT,
@@ -621,7 +629,7 @@ export class Stations {
         if (!item) return { title: 'Seasoning Station', hint: 'Place food here to season it', value: 0, max: 1 };
         return {
           title: `Seasoning ${item.name}`,
-          hint: 'Hold click, shake LEFT-RIGHT. Stop in the band',
+          hint: this.mittsOn ? 'Clumsy in oven mitts! Press F to take them off' : 'Hold click, shake LEFT-RIGHT. Stop in the band',
           value: item.cook.season,
           max: 1.2,
           zone: [SEASON_TARGET - SEASON_WINDOW, SEASON_TARGET + SEASON_WINDOW],
@@ -631,7 +639,7 @@ export class Stations {
         const down = item.anim.flipSide;
         return {
           title: `Frying ${item.name} (side ${down ? 'B' : 'A'})`,
-          hint: 'Hold click, flick UP to flip. Grab when both sides are golden',
+          hint: this.mittsOn ? 'Mitts fumble flips (F to take off), but you need them to grab it out' : 'Hold click, flick UP to flip. Grab when both sides are golden',
           value: item.cook.fry[down],
           max: 2,
           zone: [0.78, 1.22],

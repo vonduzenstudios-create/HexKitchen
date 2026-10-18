@@ -203,6 +203,14 @@ const ico = (n: IconName) => ICONS[n];
 
 // ------------------------------------------------------------------ HUD
 
+/** One contestant on the end-of-round scoreboard. */
+export interface ScoreRow {
+  name: string;
+  dish: string;
+  score: number;
+  you?: boolean;
+}
+
 export class Hud {
   private crosshair = el('div', 'crosshair');
   private prompt = el('div', 'prompt');
@@ -262,6 +270,14 @@ export class Hud {
   private toastEl = el('div', 'toast hidden');
   /** One-line event notice under the timer (Service Inspection countdown, printed tickets). */
   private noticeEl = el('div', 'notice hidden');
+  private chipsEl = el('div', 'chips');
+  private boardEl = el('div', 'scoreboard hidden');
+  private passEl = el('div', 'pass-mark');
+  private messPanel = panel('meter-panel mess');
+  private messFill = el('i');
+  private messFoot = el('div', 'meter-foot');
+  private messKey = '';
+  private chipsKey = '';
   private noticeText = '';
   private screen = el('div', 'screen hidden');
   private subTimer = 0;
@@ -312,7 +328,15 @@ export class Hud {
     sBody.append(sHead, sBar, el('div', 'meter-foot', 'At 100% you become a statue.'));
     this.stonePanel.append(el('div', 'meter-icon', ico('stone')), sBody);
 
-    this.right.append(this.wrathPanel, this.stonePanel, this.nextPanel);
+    wBody.append(this.passEl);
+    // Mess
+    const mBar = el('div', 'mess-bar');
+    mBar.append(this.messFill);
+    const mBody = el('div', 'meter-body');
+    mBody.append(el('div', 'meter-head', '<span class="meter-name">Mess</span>'), mBar, this.messFoot);
+    this.messPanel.append(el('div', 'meter-icon', ico('trash')), mBody);
+
+    this.right.append(this.wrathPanel, this.stonePanel, this.messPanel, this.nextPanel);
     this.left.append(this.cardsEl, this.progressPanel);
     this.left.classList.add('hidden');
     this.nextPanel.classList.add('hidden');
@@ -331,7 +355,7 @@ export class Hud {
     this.subs.append(el('i', 'orn'), portrait, subsBody, el('div', 'embers'), el('span', 'subs-pip'));
 
     this.gazeEl.append(this.gazeRing, this.gazeTitle, this.gazeSub);
-    this.play.append(this.gazeEl, this.cutEl, this.crosshair, this.prompt, this.left, this.timerPanel, this.right, this.gaugeEl, this.toastEl, this.noticeEl);
+    this.play.append(this.gazeEl, this.cutEl, this.crosshair, this.prompt, this.left, this.timerPanel, this.right, this.gaugeEl, this.toastEl, this.noticeEl, this.chipsEl, this.boardEl);
     root.append(this.play, this.subs, this.banner, this.screen);
     this.setPlaying(false);
 
@@ -379,7 +403,15 @@ export class Hud {
     this.timerPanel.classList.toggle('warm', s <= 30 && s > 10);
   }
 
-  setMeters(wrath: number, stone: number): void {
+  setMeters(wrath: number, stone: number, mess = 0, messSeen = false, passMark = 0): void {
+    const mKey = `${Math.round(mess)}|${messSeen}|${passMark}`;
+    if (mKey !== this.messKey) {
+      this.messKey = mKey;
+      this.messFill.style.width = `${Math.round(mess)}%`;
+      this.messPanel.classList.toggle('danger', messSeen);
+      this.messFoot.textContent = messSeen ? 'Gorgon can SEE it: Wrath rising! Bin it or put it back.' : mess > 0 ? 'Loose food and kit. Tidy up before he sees.' : 'Spotless. Keep it that way.';
+      this.passEl.innerHTML = passMark ? `Pass mark <b>${passMark}</b> · rises with his Wrath` : '';
+    }
     const lit = Math.round((Math.max(0, Math.min(100, wrath)) / 100) * this.wrathSegs.length);
     const state = wrathStage(wrath).stage;
     const wKey = `${lit}|${state}`;
@@ -524,12 +556,12 @@ export class Hud {
   }
 
   /** Punchy word above the station gauge after each chop. */
-  cutFeedback(word: 'Perfect' | 'Good' | 'Sloppy'): void {
-    this.cutEl.textContent = word === 'Perfect' ? 'PERFECT!' : word === 'Good' ? 'Good' : 'Sloppy';
+  cutFeedback(word: 'Perfect' | 'Good' | 'Sloppy', text?: string): void {
+    this.cutEl.textContent = text ?? (word === 'Perfect' ? 'PERFECT!' : word === 'Good' ? 'Good' : 'Sloppy');
     this.cutEl.className = `cutfb ${word.toLowerCase()}`;
     void this.cutEl.offsetWidth; // restart the animation
     this.cutEl.classList.add('go');
-    this.cutTimer = 0.6;
+    this.cutTimer = text ? 1.4 : 0.6;
   }
 
   /** Big ring around the crosshair while Gorgon winds up and fires his gaze. */
@@ -604,13 +636,45 @@ export class Hud {
     this.subTimer = seconds;
   }
 
+  /** Small persistent status chips near the crosshair's lower left (oven mitts on, etc.). */
+  setChips(chips: { text: string; tone?: 'warn' | 'info' }[]): void {
+    const key = chips.map((c) => c.text + c.tone).join('|');
+    if (key === this.chipsKey) return;
+    this.chipsKey = key;
+    this.chipsEl.innerHTML = chips.map((c) => `<span class="chip ${c.tone ?? 'info'}">${esc(c.text)}</span>`).join('');
+  }
+
+  /** End-of-round judging: everyone's score, the pass mark, and (finally) who gets turned to stone. */
+  scoreboard(rows: ScoreRow[] | null, pass: number, shown: number, worst: number | null): void {
+    if (!rows) {
+      this.boardEl.classList.add('hidden');
+      return;
+    }
+    this.boardEl.classList.remove('hidden');
+    const body = rows
+      .map((r, i) => {
+        const vis = i < shown;
+        const cls = ['sb-row', r.you ? 'you' : '', worst === i ? 'worst' : '', vis && r.score < pass ? 'under' : ''].join(' ');
+        return `<div class="${cls}"><span class="sb-name">${esc(r.name)}</span><span class="sb-dish">${esc(r.dish)}</span><span class="sb-score">${vis ? r.score : '…'}</span>${worst === i ? '<span class="sb-stone">STONE</span>' : ''}</div>`;
+      })
+      .join('');
+    this.boardEl.innerHTML = `<h2>Gorgon's Verdict</h2><div class="sb-pass">Pass mark <b>${pass}</b> (raised by his Wrath)</div>${body}`;
+  }
+
+  /** A short "+10 Wrath · pass mark 62 ▲" that floats off the Wrath meter. */
+  wrathPop(text: string, bad: boolean): void {
+    const e = el('div', `wrath-pop ${bad ? 'bad' : 'good'}`, esc(text));
+    this.wrathPanel.append(e);
+    setTimeout(() => e.remove(), 2200);
+  }
+
   notice(text: string | null): void {
     const t = text ?? '';
     if (t === this.noticeText) return;
     this.noticeText = t;
     this.noticeEl.textContent = t;
     this.noticeEl.classList.toggle('hidden', !t);
-    this.noticeEl.classList.toggle('alert', t.startsWith('SERVICE'));
+    this.noticeEl.classList.toggle('alert', /^(SERVICE|INSPECTION)/.test(t));
   }
 
   showBanner(title: string, sub: string, seconds: number): void {
@@ -666,7 +730,7 @@ export class Hud {
         ${row('Right click', 'pan', 'Raise the polished pan to reflect his gaze')}
         ${row('Space / C', 'stone', 'Crouch behind counters for cover')}
         ${row('E', 'bell', "Serve a finished plate: you plate it up first, then it goes out")}
-        ${row('F / Q', 'trash', 'F takes off the oven mitts · Q drops what you hold · click the trash can to bin')}
+        ${row('F / Q', 'trash', 'F hangs up the oven mitts · click a counter to set things down · Q drops · bin floor food in the trash')}
         ${extra}
       </div>
       <button class="btn" id="start">Enter the Kitchen</button>

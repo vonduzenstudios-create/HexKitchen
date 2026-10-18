@@ -6,8 +6,8 @@ import type { Input } from '../engine/input';
 import { Physics, GROUP } from '../engine/physics';
 import type { PsxRenderer } from '../engine/renderer';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type { Hud } from '../ui/hud';
-import { GorgonAI, type GorgonWorld } from './gorgonAI';
+import type { Hud, ScoreRow } from '../ui/hud';
+import { INSPECT_GRACE, GorgonAI, type GorgonWorld } from './gorgonAI';
 import { INGREDIENTS, ingredientMeshFactories, type IngredientKind } from './ingredients';
 import { Interaction } from './interact';
 import { Items, type Item } from './items';
@@ -16,7 +16,7 @@ import { pickLine, type LineKey } from './lines';
 import { Particles } from './particles';
 import { Player } from './player';
 import { evaluateDish, type DishResult, type Recipe } from './recipes';
-import { Rivals } from './rivals';
+import { Rivals, type Rival } from './rivals';
 import { Stations, type PlateId, type Ticket } from './stations';
 import { buildObjectives } from './objectives';
 import { PlatingMode, type PlatingResult } from './plating';
@@ -29,6 +29,7 @@ import { AssemblyPreview } from './assembly';
 
 const EPISODE = currentEpisode();
 const ROUNDS: RoundDef[] = EPISODE.rounds;
+const RIVAL_NAMES = ['Dex', 'Marla', 'Benny'];
 
 type Phase = 'title' | 'cutscene' | 'playing' | 'dead' | 'ended';
 
@@ -70,8 +71,19 @@ export class Game {
   private roundDone: (() => void) | null = null;
   private heartbeat: LoopHandle | null = null;
   private thrownHits = new Set<number>();
-  private bossRivalDone = false;
+  /** Which rival stands at which statue spot, in the order they were frozen. */
+  private frozen = 0;
   private reactCd = 0;
+  private extinguisherHome = new THREE.Vector3();
+  private inspectNotice = false;
+  /** Dishes Gorgon waved through that a diner will send back. */
+  private sentBack: { entry: { recipe: Recipe; result: DishResult | null }; real: DishResult; t: number }[] = [];
+  /** Mess: how long each loose thing has been lying about, the meter, and how much of it Gorgon can see. */
+  private restT = new Map<Item, number>();
+  private mess = 0;
+  private messSeen = 0;
+  private messScan = 0;
+  private messCd = 0;
   private stats = { dropped: 0, gazesSurvived: 0, gazesCaught: 0, reflects: 0, fires: 0, thrown: 0, plates: 0, worst: '', worstScore: 101, insult: '' };
 
   constructor(
@@ -168,7 +180,7 @@ export class Game {
     this.hands.root.position.set(0, -0.05, -0.12);
     this.interact = new Interaction(this.player, this.kitchen, this.items, this.stations, this.hands, {
       serve: (plates) => this.serve(plates),
-      grabbed: () => {},
+      grabbed: (it) => this.onGrabbed(it),
       thrown: () => {},
       binned: (it) => this.binItem(it),
       burnedHand: () => {
@@ -216,7 +228,8 @@ export class Game {
 
   private hangMirrorPan(): void {
     // Fire extinguisher stands on the counter beside the stove.
-    this.items.spawn('extinguisher', this.kitchen.extinguisher?.clone() ?? new THREE.Vector3(2.7, COUNTER_TOP + 0.05, -3.6));
+    this.extinguisherHome = this.kitchen.extinguisher?.clone() ?? new THREE.Vector3(2.7, COUNTER_TOP + 0.05, -3.6);
+    this.items.spawn('extinguisher', this.extinguisherHome.clone());
     const pan = this.items.spawn('mirrorPan', this.kitchen.mirrorHook.clone());
     pan.setKinematic(true);
     pan.where = 'hook';
@@ -291,7 +304,13 @@ export class Game {
   // ---------- meters ----------
 
   addWrath(n: number): void {
+    const before = this.passMark();
     this.wrath = THREE.MathUtils.clamp(this.wrath + n, 0, 100);
+    // Big jumps say what they cost you: the bar you have to clear just went up.
+    if (Math.abs(n) >= 3 && this.phase === 'playing') {
+      const after = this.passMark();
+      this.hud.wrathPop(n > 0 ? `+${Math.round(n)} Wrath · pass mark ${after}${after > before ? ' ▲' : ''}` : `${Math.round(n)} Wrath · pass mark ${after}${after < before ? ' ▼' : ''}`, n > 0);
+    }
   }
 
   addPetrify(n: number, reason: string): void {
@@ -316,11 +335,9 @@ export class Game {
     this.stats.dropped++;
     // Dropping food is the one thing he can't stand. If he sees it: instant meltdown.
     // If not, he hears the splat and comes looking, so bin it before he gets there.
-    const eye = this.gorgon.eye();
+    it.floorAt = this.time;
     const p = it.group.position.clone().setY(0.3);
-    const close = eye.distanceTo(p) < 7;
-    const d = p.clone().sub(eye);
-    const seen = close && this.physics.raycast(eye, d.clone().normalize(), Math.max(0, d.length() - 0.25), GROUP.STATIC | GROUP.STATUE) === null;
+    const seen = this.gorgonSees(p);
     if (seen && this.gorgon.tantrum()) {
       this.addWrath(10);
       this.react('gasp', 0.8);
@@ -328,6 +345,113 @@ export class Game {
       this.addWrath(2);
     }
     void it;
+  }
+
+  /** A diner sends a dish back: the flaw Gorgon missed comes out, and he takes it badly. */
+  private sendBack(sb: { entry: { recipe: Recipe; result: DishResult | null }; real: DishResult }): void {
+    sb.entry.result = sb.real;
+    this.sentBack = this.sentBack.filter((x) => x !== sb);
+    audio.play('buzzer');
+    this.gorgonSay('sentBack', false, 3);
+    this.addWrath(12);
+    this.react('boo', 1);
+    this.hud.toast('SENT BACK', sb.real.score, `${sb.entry.recipe.name}: ${sb.real.breakdown.join(' · ')}`);
+  }
+
+  private updateSentBack(dt: number, playing: boolean): void {
+    if (!playing || !this.sentBack.length) return;
+    for (const sb of this.sentBack.slice()) if ((sb.t -= dt) <= 0) {
+      this.sendBack(sb);
+      return;
+    }
+  }
+
+  /** The score a round needs to clear: the angrier he is, the harsher he judges. */
+  private passMark(): number {
+    return Math.round(50 + this.wrath * 0.3);
+  }
+
+  /** Can Gorgon see this spot right now (close enough, nothing solid in the way)? */
+  private gorgonSees(p: THREE.Vector3, range = 7): boolean {
+    if (this.gorgon.state === 'offstage') return false;
+    const eye = this.gorgon.eye();
+    const d = p.clone().sub(eye);
+    if (d.length() > range) return false;
+    return this.physics.raycast(eye, d.clone().normalize(), Math.max(0, d.length() - 0.25), GROUP.STATIC | GROUP.STATUE) === null;
+  }
+
+  /** Picking food back up: inside five seconds it's (mostly) fine, unless he watched you do it. */
+  private onGrabbed(it: Item): void {
+    if (this.phase !== 'playing' || !it.isIngredient || !it.cook.floor) return;
+    const p = it.group.position.clone().setY(0.3);
+    if (this.gorgonSees(p, 8)) {
+      this.gorgonSay('floorPickup', false, 3);
+      this.addWrath(8);
+      this.react('gasp', 1);
+      this.hud.cutFeedback('Sloppy', 'He SAW that!');
+      return;
+    }
+    if (this.time - it.floorAt <= 5) {
+      it.cook.floor = false;
+      it.cook.floorRule = true;
+      this.hud.cutFeedback('Good', '5-second rule!');
+      audio.play('pickup', { volume: 0.7, pitch: 1.4 });
+    } else {
+      this.hud.cutFeedback('Sloppy', 'Too late: floor food');
+    }
+  }
+
+  /** Is this item where it belongs (tray rack, extinguisher bracket)? */
+  private isHome(it: Item): boolean {
+    const p = it.group.position;
+    if (it.kind === 'tray') return !!this.kitchen.hotel?.trayRack.some((r) => Math.hypot(r.x - p.x, r.z - p.z) < 0.35 && Math.abs(r.y - p.y) < 0.15);
+    if (it.kind === 'extinguisher') return p.distanceTo(this.extinguisherHome) < 0.6;
+    // The rickety shelf's stock belongs on the shelf until somebody knocks it off.
+    if (this.shelfItems.includes(it)) return !it.cook.floor && p.y > 0.4;
+    return false;
+  }
+
+  /**
+   * The mess meter: anything left lying around (food or kit on a counter for more than a moment,
+   * anything on the floor) counts. Whatever Gorgon can see of it winds him up until you bin it or put it away.
+   */
+  private updateMess(dt: number, playing: boolean): void {
+    this.messCd -= dt;
+    this.messScan -= dt;
+    if (this.messScan > 0) return;
+    const step = 0.5 - this.messScan;
+    this.messScan = 0.5;
+    let total = 0;
+    let seen = 0;
+    for (const it of this.items.list) {
+      if (it.where !== 'world' || it.kind === 'trolley' || it.kind === 'mirrorPan' || it.hiddenInAssembly) {
+        this.restT.delete(it);
+        continue;
+      }
+      const v = it.body.linvel();
+      if (Math.hypot(v.x, v.y, v.z) > 0.3) continue;
+      if (this.isHome(it)) {
+        this.restT.delete(it);
+        continue;
+      }
+      const t = (this.restT.get(it) ?? 0) + step;
+      this.restT.set(it, t);
+      const p = it.group.position;
+      const onFloor = p.y < 0.35;
+      if (!onFloor && t < 3) continue;
+      const w = onFloor ? 2 : 1;
+      total += w;
+      if (playing && this.gorgonSees(p.clone().setY(Math.max(0.3, p.y)))) seen += w;
+    }
+    for (const it of this.restT.keys()) if (!this.items.list.includes(it)) this.restT.delete(it);
+    this.mess = Math.min(100, total * 10);
+    this.messSeen = seen;
+    if (!playing || !seen) return;
+    this.addWrath(step * 0.25 * Math.min(4, seen));
+    if (this.messCd <= 0 && this.gorgon.state === 'patrol') {
+      this.messCd = 20;
+      this.gorgonSay('messSpotted', false, 2);
+    }
   }
 
   // ---------- flow ----------
@@ -360,7 +484,7 @@ export class Game {
     for (let i = 0; i < ROUNDS.length; i++) {
       await this.playRound(i);
       if ((this.phase as Phase) === 'dead') return;
-      if (i < ROUNDS.length - 1) await this.stoneColdScene(i);
+      if (!(await this.judging(i))) return;
     }
   }
 
@@ -414,7 +538,7 @@ export class Game {
         t.served = true;
         this.results.push({ recipe: t.recipe, result });
       }
-      await this.tasting(result);
+      void result;
       return;
     }
     if (unserved.length) {
@@ -433,10 +557,9 @@ export class Game {
     await this.wait(3);
   }
 
-  private async stoneColdScene(i: number): Promise<void> {
+  private async stoneColdScene(rival: Rival): Promise<void> {
     this.phase = 'cutscene';
-    const rival = this.rivals.list[i];
-    const spot = this.kitchen.statueSpots[i];
+    const spot = this.kitchen.statueSpots[Math.min(this.frozen++, this.kitchen.statueSpots.length - 1)];
     music.setMode('tasting');
     music.sting('dread');
     rival.action = 'panic';
@@ -460,32 +583,59 @@ export class Game {
     this.player.faceTarget = null;
   }
 
-  private async tasting(result: DishResult): Promise<void> {
+  /**
+   * End of round: Gorgon tastes every contestant's dish. Yours has to clear the pass mark (which his Wrath
+   * pushes up) and beat at least one rival. The worst cook in the kitchen is turned to stone.
+   * Returns false if that was you.
+   */
+  private async judging(i: number): Promise<boolean> {
+    const r = ROUNDS[i];
     this.phase = 'cutscene';
+    this.interact.reset();
     music.setMode('tasting');
-    this.hud.showBanner('The Tasting', `Gorgon tastes your ${EPISODE.bossDish}...`, 3);
+    // Anything still waiting to be sent back comes back now, before he scores the round.
+    for (const sb of this.sentBack.slice()) {
+      this.sendBack(sb);
+      await this.wait(3.5);
+    }
+    const mine = this.results.filter((x) => r.recipes.includes(x.recipe));
+    const yours = Math.round(r.recipes.reduce((sum, rec) => sum + (mine.find((x) => x.recipe === rec)?.result?.score ?? 0), 0) / r.recipes.length);
+    const pass = this.passMark();
+    const alive = this.rivals.list.filter((x) => !x.isStatue);
+    const dish = r.recipes.map((x) => x.name).join(' + ');
+    // Rivals cook a little better each round, but a clean dish from you beats them.
+    const rivalScores = alive.map(() => Math.round(42 + i * 5 + Math.random() * 30));
+    const rows: ScoreRow[] = [
+      ...alive.map((x, k) => ({ name: RIVAL_NAMES[this.rivals.list.indexOf(x)] ?? 'Rival', dish, score: rivalScores[k] })),
+      { name: 'You', dish, score: yours, you: true },
+    ];
+    this.hud.showBanner(r.boss ? 'The Final Judgment' : 'Judging', `Gorgon tastes every dish. The worst cook turns to stone.`, 3);
     const judge = this.kitchen.judgeSpot;
     this.player.faceTarget = judge.clone().setY(1.75);
     await this.gorgon.goTo(judge, 1.2);
     this.gorgon.faceToward(this.kitchen.stations.plateA.clone().setY(0));
     this.gorgon.setScripted('taste', null);
-    await this.wait(this.gorgon.say(EPISODE.taste, 3));
-    this.heartbeat?.setVolume(0.8);
-    await this.wait(3);
+    await this.wait(this.gorgon.say(r.boss ? EPISODE.taste : 'judgeIntro', 3));
+    // Reveal the scores one by one.
+    for (let k = 0; k < rows.length; k++) {
+      this.hud.scoreboard(rows, pass, k + 1, null);
+      audio.play(rows[k].you ? 'bell' : 'plate', { volume: 0.6 });
+      if (rows[k].you) this.heartbeat?.setVolume(0.8);
+      await this.wait(rows[k].you ? 2.2 : 1.1);
+    }
     this.heartbeat?.setVolume(0);
-    const win = result.score >= 60 && this.petrify < 100;
+    const lowestRival = rivalScores.length ? Math.min(...rivalScores) : -1;
+    const youWorst = yours < pass || yours < lowestRival;
+    const worstIdx = youWorst ? rows.length - 1 : rivalScores.indexOf(lowestRival);
+    this.hud.scoreboard(rows, pass, rows.length, worstIdx);
     this.gorgon.faceToward(this.player.position);
-    this.hud.toast(result.grade, result.score, result.breakdown.join(' · '));
-    if (win) {
-      this.gorgon.setScripted('laugh', this.player.camera.position);
-      music.setMode('victory');
-      this.react('applause', 1);
-      await this.wait(this.gorgon.say(EPISODE.win, 3));
-      this.finish(true, pickLine(EPISODE.win));
-    } else {
+    if (youWorst) {
+      this.trackWorst(yours < pass ? `Scored ${yours}, under the pass mark of ${pass}` : `Out-cooked by every rival (${yours})`, yours);
+      await this.wait(2);
+      this.hud.scoreboard(null, 0, 0, null);
       this.gorgon.setScripted('gaze', this.player.camera.position);
       this.player.faceTarget = this.gorgon.eye();
-      const d = this.gorgon.say(EPISODE.lose, 3);
+      const d = this.gorgon.say(r.boss ? EPISODE.lose : 'judgeYouFail', 3);
       this.gorgon.glow = 1;
       audio.play('eyeGlow');
       await this.wait(Math.max(2, d - 0.5));
@@ -499,8 +649,21 @@ export class Game {
       this.react('gasp', 1);
       music.setMode('gameover');
       await this.wait(2);
-      this.finish(false, pickLine(EPISODE.lose));
+      this.finish(false, pickLine(r.boss ? EPISODE.lose : 'judgeYouFail'));
+      return false;
     }
+    this.gorgon.setScripted('armsCrossed', this.player.camera.position);
+    await this.wait(Math.max(2, this.gorgon.say('judgeYouPass', 3)));
+    this.hud.scoreboard(null, 0, 0, null);
+    if (alive.length) await this.stoneColdScene(alive[worstIdx]);
+    if (r.boss) {
+      this.gorgon.setScripted('laugh', this.player.camera.position);
+      music.setMode('victory');
+      this.react('applause', 1);
+      await this.wait(this.gorgon.say(EPISODE.win, 3));
+      this.finish(true, pickLine(EPISODE.win));
+    }
+    return true;
   }
 
   private async petrifiedDeath(reason: string): Promise<void> {
@@ -594,9 +757,21 @@ export class Game {
         else if (result.grade === 'Good' && result.issue === 'perfect') result.issue = 'good';
         result.breakdown.push(`plating: ${pr.grade}`);
       }
+      // Later rounds: he's rushed and sometimes misses a flaw... but a diner won't.
+      const r = ROUNDS[this.roundIndex];
+      const missChance = this.roundIndex >= 1 && !r.boss && result.score < 80 && result.score >= 25 ? 0.2 + 0.15 * this.roundIndex : 0;
+      let missed: DishResult | null = null;
+      if (Math.random() < missChance) {
+        missed = { ...result, breakdown: [...result.breakdown] };
+        result.score = Math.max(result.score, 78 + Math.round(Math.random() * 8));
+        result.grade = gradeFor(result.score);
+        result.issue = 'good';
+      }
       t.served = true;
       servedAny = true;
-      this.results.push({ recipe: t.recipe, result });
+      const entry = { recipe: t.recipe, result };
+      this.results.push(entry);
+      if (missed) this.sentBack.push({ entry, real: missed, t: 22 + Math.random() * 18 });
       this.stations.assignTicket(p, null);
       this.hud.toast(result.grade, result.score, `${t.recipe.name}: ${result.breakdown.join(' · ')}`);
       this.trackWorst(`${result.grade} ${t.recipe.name} (${result.score})`, result.score);
@@ -703,16 +878,6 @@ export class Game {
         if (this.plating.active) this.endPlating(false);
         this.roundDone?.();
       }
-      // Final rival falls mid-way through the boss round.
-      const r = ROUNDS[this.roundIndex];
-      if (r.boss && !this.bossRivalDone && this.roundTime < r.seconds * 0.55 && this.gorgon.state === 'patrol') {
-        this.bossRivalDone = true;
-        const last = this.rivals.list[2];
-        last.action = 'panic';
-        audio.play('eyeGlow', { pos: last.pos });
-        this.gorgon.say('stoneCold', 2);
-        void this.rivals.petrify(last).then(() => this.react('gasp', 1));
-      }
     }
 
     const working = this.interact.working !== null || this.plating.active;
@@ -750,12 +915,14 @@ export class Game {
     // An open fire keeps him boiling.
     if (playing && this.stations.fires.size) this.addWrath(dt * 1.2 * this.stations.fires.size);
     this.stations.update(dt);
+    this.updateMess(dt, playing);
+    this.updateSentBack(dt, playing);
     this.gorgon.update(dt);
     this.rivals.setMood(this.gorgon.gazing || this.gorgon.state === 'gazeWindup');
     this.rivals.update(dt);
     this.particles.update(dt);
     this.checkThrownAtGorgon();
-    if (this.items.list.length > 70) {
+    if (this.items.list.length > 140) {
       const old = this.items.list.find((i) => i.where === 'world' && i.cook.floor);
       if (old) this.items.remove(old);
     }
@@ -774,7 +941,7 @@ export class Game {
     // HUD.
     if (this.roundIndex >= 0) this.hud.setRound(ROUNDS[this.roundIndex].name, this.roundTime);
     else this.hud.setRound('Hex Kitchen', 0);
-    this.hud.setMeters(this.wrath, this.petrify);
+    this.hud.setMeters(this.wrath, this.petrify, this.mess, this.messSeen > 0, this.passMark());
     const gs = this.gorgon.state;
     this.hud.setGazeWarning({
       phase: playing && gs === 'gazeWindup' ? 'windup' : playing && gs === 'gaze' ? 'gaze' : 'none',
@@ -791,6 +958,17 @@ export class Game {
     this.hud.setObjectives(this.roundIndex >= 0 ? buildObjectives(this.tickets, this.stations, this.items.list, this.interact.held) : []);
     const tgt = this.interact.target;
     this.hud.setPrompt(this.interact.prompt, !!tgt);
+    const chips: { text: string; tone?: 'warn' | 'info' }[] = [];
+    if (playing && this.gorgon.state === 'inspect') {
+      const left = Math.ceil(INSPECT_GRACE - this.gorgon.stateT);
+      this.hud.notice(left > 0 ? `INSPECTION: hold up some food and look at him · ${left}s` : null);
+      this.inspectNotice = true;
+    } else if (this.inspectNotice) {
+      this.inspectNotice = false;
+      this.hud.notice(null);
+    }
+    if (playing && this.interact.wearingMitts) chips.push({ text: 'Oven mitts on · F to take off', tone: 'info' });
+    this.hud.setChips(chips);
     const gaugeStation = this.interact.working ?? (tgt?.type === 'station' ? tgt.id : tgt?.type === 'item' ? tgt.station : null);
     this.hud.setGauge(playing && gaugeStation ? this.stations.gauge(gaugeStation) : null);
   }

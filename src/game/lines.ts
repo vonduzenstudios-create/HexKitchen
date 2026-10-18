@@ -72,6 +72,12 @@ export type LineKey =
   | 'sabotageBin'
   | 'sabotageSlam'
   | 'stoneCold'
+  | 'floorPickup'
+  | 'messSpotted'
+  | 'judgeIntro'
+  | 'judgeYouPass'
+  | 'judgeYouFail'
+  | 'sentBack'
   | 'fire'
   | 'dropped'
   | 'hitByFood'
@@ -353,6 +359,31 @@ export const LINES: Record<LineKey, string[]> = {
   ],
   sabotageSlam: [
     "WAKE UP! Do you hear me? WAKE UP!",
+  ],
+  floorPickup: [
+    "Did you just pick that up off the FLOOR? I SAW that! Five-second rule my backside!",
+    "I watched you scrape that off the tiles! You want to serve FLOOR to my guests?",
+  ],
+  messSpotted: [
+    "Look at this STATION! It's a pigsty! Put things back where they BELONG!",
+    "Clean as you go! Is that so HARD? This kitchen looks like a crime scene!",
+    "Why is there food lying everywhere? Bin it or use it!",
+  ],
+  judgeIntro: [
+    "Right. Time to taste. Every dish. And the worst cook in this kitchen gets turned to STONE.",
+    "Plates up! I taste everything, and whoever cooked the worst gets a new career as a statue.",
+  ],
+  judgeYouPass: [
+    "Yours... is edible. You live. For now.",
+    "Hmm. Not the worst. Which in this kitchen is practically a compliment.",
+  ],
+  judgeYouFail: [
+    "And YOU. That was the worst thing I've tasted all night. Look into my eyes.",
+    "You couldn't even beat the bar. Congratulations. You're the worst cook here.",
+  ],
+  sentBack: [
+    "A table just SENT IT BACK! They found what I didn't! Do you know how that makes me LOOK?",
+    "SENT BACK! From the dining room! You slipped that past me and the GUESTS caught it!",
   ],
   stoneCold: [
     "You. You're DONE. Take off your apron... oh wait, you can't. You're STONE.",

@@ -20,6 +20,8 @@ export interface HandsRig {
   setStone(v: number): void;
   /** Optional extra: empty inside the left fist, same convention as rightGrip. */
   leftGrip?: THREE.Object3D;
+  /** Swap bare hands for quilted oven mitts. */
+  setMitts?(on: boolean): void;
 }
 
 const SKIN = 0xe0a074;
@@ -43,6 +45,9 @@ interface Hand {
   thumbBase: THREE.Group;
   thumbTip: THREE.Group;
   grip: THREE.Object3D;
+  /** Bare-hand meshes (hidden while wearing mitts) and the mitt meshes. */
+  bare: THREE.Object3D[];
+  mitt: THREE.Object3D[];
   cur: HandState;
   side: 1 | -1; // +1 right, -1 left
 }
@@ -222,6 +227,36 @@ function buildHand(side: 1 | -1, stone: CreepingStone): Hand {
   tnail.translate(0, 0.0118 * 0.86, ttEnd + 0.0155);
   addMesh(thumbTip, tnail, nailMat);
 
+  // Everything skin-coloured so far is the bare hand; the mitt is built over the same bones.
+  const bare: THREE.Object3D[] = [];
+  arm.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && (m.material === nailMat || (m.material as THREE.MeshStandardMaterial).color?.getHex() === SKIN)) bare.push(m);
+  });
+  const mitt: THREE.Object3D[] = [];
+  const mittMat = mat(0xb3221c, { roughness: 0.9 });
+  stone.add(mittMat, 0.3);
+  const trimMat = mat(0xf1ece0, { roughness: 0.95 });
+  stone.add(trimMat, 0.6);
+  // Padded cuff over the wrist, flaring toward the sleeve.
+  mitt.push(addMesh(arm, latheZ([[0.03, -0.045], [0.046, -0.04], [0.054, -0.01], [0.06, 0.03], [0.062, 0.05], [0.05, 0.056]]), mittMat));
+  mitt.push(addMesh(arm, (() => { const g = new THREE.TorusGeometry(0.06, 0.007, 6, 22); g.translate(0, 0, 0.05); return g; })(), trimMat));
+  // Palm block.
+  const mPalm = blob(0.034, 0.064, 0.07, 0.55, 16, 12);
+  mPalm.translate(0, 0, -0.06);
+  mitt.push(addMesh(wrist, mPalm, mittMat));
+  // One fat pouch for all four fingers, riding on the middle knuckle so it still curls.
+  const pouch = blob(0.03, 0.06, 0.05, 0.6, 16, 12);
+  pouch.translate(0, -0.011, -0.035);
+  mitt.push(addMesh(knuckles[1], pouch, mittMat));
+  const pouchTip = blob(0.026, 0.054, 0.034, 0.75, 14, 10);
+  pouchTip.translate(0, -0.011, -0.018);
+  mitt.push(addMesh(mids[1], pouchTip, mittMat));
+  // Thumb sleeve.
+  mitt.push(addMesh(thumbBase, capsuleZ(0.019, 0.004, -0.06), mittMat));
+  mitt.push(addMesh(thumbTip, capsuleZ(0.017, 0.01, -0.036), mittMat));
+  for (const m of mitt) m.visible = false;
+
   const grip = new THREE.Object3D();
   grip.position.set(-s * 0.04, 0, -0.105);
   grip.rotation.x = Math.PI / 2;
@@ -239,6 +274,8 @@ function buildHand(side: 1 | -1, stone: CreepingStone): Hand {
     thumbBase,
     thumbTip,
     grip,
+    bare,
+    mitt,
     side,
     cur: { pos: [0.25 * s, -0.27, -0.42], rot: [0.5, 0.35 * s, 0.3 * s], wrist: [0, 0, 0], curl: 0.4, thumb: 0.3 },
   };
@@ -389,6 +426,12 @@ export function buildHands(): HandsRig {
     },
     setStone(v) {
       stone.set(v);
+    },
+    setMitts(on) {
+      for (const h of [right, left]) {
+        for (const m of h.bare) m.visible = !on;
+        for (const m of h.mitt) m.visible = on;
+      }
     },
   };
   rig.update(1, 'idle');

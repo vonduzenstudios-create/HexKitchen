@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { audio } from '../audio';
 import type { HandsPose, HandsRig } from '../characters/hands';
 import { buildKnife } from '../characters/knife';
-import { buildMitt } from './plate';
 import type { Input } from '../engine/input';
 import type { IngredientKind } from './ingredients';
 import type { Item, Items } from './items';
@@ -59,7 +58,6 @@ export class Interaction {
   private time = 0;
   /** Wearing oven mitts: hot food is safe to grab, but chopping gets clumsy. */
   wearingMitts = false;
-  private mittMeshes: THREE.Object3D[] = [];
   /** Knife that appears in the right hand while chopping. */
   private knife = buildKnife();
 
@@ -74,16 +72,7 @@ export class Interaction {
     this.raycaster.far = REACH;
     this.knife.visible = false;
     this.hands.rightGrip.add(this.knife);
-    for (const grip of [this.hands.rightGrip, this.hands.leftGrip]) {
-      if (!grip) continue;
-      const m = buildMitt();
-      m.scale.setScalar(0.85);
-      m.rotation.x = Math.PI / 2;
-      m.position.set(0, 0.0, 0.06);
-      m.visible = false;
-      grip.add(m);
-      this.mittMeshes.push(m);
-    }
+
   }
 
   private pick(): Target | null {
@@ -194,15 +183,19 @@ export class Interaction {
     it.setKinematic(false);
     const v = this.holdVel.clone();
     const speed = v.length();
-    // A loaded tray set down gently on a surface lands flat instead of being dropped from hand height.
-    if (it.kind === 'tray' && speed < 3) {
+    // Clicking a counter (or the floor) without flicking sets the item down there, upright, instead of dropping it.
+    if (speed < 3) {
       const p = this.surfacePoint();
       if (p) {
-        it.body.setTranslation({ x: p.x, y: p.y + 0.015, z: p.z }, true);
-        it.body.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw), true);
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw);
+        it.group.quaternion.copy(q);
+        it.group.updateMatrixWorld(true);
+        const lift = it.group.position.y - new THREE.Box3().setFromObject(it.group, true).min.y;
+        it.body.setTranslation({ x: p.x, y: p.y + lift + 0.005, z: p.z }, true);
+        it.body.setRotation(q, true);
         it.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         it.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-        audio.play('clang', { pos: p, volume: 0.4, pitch: 1.1 });
+        audio.play(it.isIngredient ? 'squish' : 'clang', { pos: p, volume: 0.35, pitch: 1.1 });
         return;
       }
     }
@@ -362,7 +355,7 @@ export class Interaction {
             const it = this.items.spawn(t.kind, cam.position.clone().add(this.player.forward().multiplyScalar(0.5)));
             this.grab(it);
           } else if (t.type === 'mitts') {
-            this.setMitts(true);
+            this.setMitts(!this.wearingMitts);
           } else if (t.type === 'plateStack') {
             const it = this.items.spawn('plate', this.kitchen.plateStack.clone().setY(1.2));
             this.grab(it);
@@ -415,7 +408,7 @@ export class Interaction {
     this.wearingMitts = on;
     this.stations.mittsOn = on;
     this.kitchen.mitts.visible = !on;
-    for (const m of this.mittMeshes) m.visible = on;
+    this.hands.setMitts?.(on);
     audio.play('pickup', { volume: 0.5, pitch: on ? 0.7 : 0.9 });
   }
 
@@ -485,7 +478,11 @@ export class Interaction {
     if (this.working) return '';
     if (this.held) {
       if (this.held.kind === 'extinguisher') return 'Hold click: spray at the fire  ·  Q: put it down';
-      if (!t) return `Holding ${this.held.name}  ·  Click: drop / flick to throw${this.held.kind === 'mirrorPan' ? '  ·  Right-click: raise mirror' : ''}`;
+      if (!t) {
+        const where = this.surfacePoint();
+        const down = where ? (where.y > 0.5 ? 'Click: set it down here' : 'Click: put it on the floor (mess!)') : 'Click: drop';
+        return `Holding ${this.held.name}  ·  ${down} / flick to throw${this.held.kind === 'mirrorPan' ? '  ·  Right-click: raise mirror' : ''}`;
+      }
       if (t.type === 'hook' && this.held.kind === 'mirrorPan') return 'Click: hang the pan back up';
       if (t.type === 'prop') {
         if (t.name === 'toaster') return this.held.kind === 'sourdough' && this.held.cook.chopped ? 'Click: drop the slice in the toaster (stand back!)' : 'The toaster only takes sourdough slices';
@@ -534,7 +531,7 @@ export class Interaction {
         }
         if (t.station && WORKABLE.includes(t.station) && this.isWorkable(t.station, t.item)) {
           const verb = t.station === 'board' ? 'chop' : t.station === 'prep' ? 'season' : 'flip';
-          if (t.station === 'board' && this.wearingMitts) return `Hold click: chop (clumsy in mitts! F: take them off)  ·  Tap: take ${t.item.name}`;
+          if ((t.station === 'board' || t.station === 'prep' || t.station === 'pan') && this.wearingMitts) return `Hold click: ${verb} (clumsy in mitts! F: take them off)  ·  Tap: take ${t.item.name}`;
           return `Hold click: ${verb}  ·  Tap: take ${t.item.name}`;
         }
         if (t.station === 'plateA' || t.station === 'plateB') return `Click: take ${t.item.name}  ·  E: serve plate`;
@@ -556,7 +553,7 @@ export class Interaction {
       case 'trash':
         return 'Trash: bin dropped food here before Gorgon finds it';
       case 'mitts':
-        return 'Click: put on oven mitts (needed for hot pans and pots)';
+        return this.wearingMitts ? 'Click: hang the oven mitts back up (or press F anywhere)' : 'Click: put on oven mitts (for hot pans, pots and the oven)';
       case 'plateStack':
         return 'Click: take a clean plate (careful, they break)';
     }

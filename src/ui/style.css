@@ -240,6 +240,14 @@ html, body {
 .stone.warm .meter-state { color: #ffaa20; }
 .stone.danger .meter-state { color: var(--danger); }
 .stone.danger .stone-fill { box-shadow: 0 0 10px rgba(255, 60, 30, 0.8); }
+.mess-bar { height: 0.7em; padding: 2px; background: #120a07; border: 1px solid rgba(255, 170, 60, 0.45); border-radius: 0.2em; overflow: hidden; }
+.mess-bar i { display: block; height: 100%; width: 0%; border-radius: 1px; transition: width 0.3s; background: linear-gradient(90deg, #8a6a2a, #c79a3a 60%, #e0b050); }
+.meter-panel.mess.danger .mess-bar i { background: linear-gradient(90deg, #a02010, #ff5a2a); }
+.meter-panel.mess { padding-top: 0.5em; padding-bottom: 0.5em; }
+.meter-panel.mess .meter-icon { width: 2.4em; height: 2.4em; }
+.pass-mark { margin-top: 0.35em; font-size: 0.82em; color: var(--ink-dim); }
+.pass-mark b { color: #ffd36a; font-size: 1.15em; }
+.meter-panel.mess.danger { animation: none; border-color: #ff5a3a; }
 .meter-panel.danger { animation: shake 0.16s linear infinite; }
 .meter-panel.danger::before { background: linear-gradient(160deg, #ff9a7a, #e0200c 40%, #6a0804 60%, #ff4a2a); }
 @keyframes shake { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-2px, 1px); } 50% { transform: translate(2px, -1px); } 75% { transform: translate(-1px, -1px); } }
@@ -500,6 +508,25 @@ html, body {
 @keyframes gaze-throb { to { transform: translateX(-50%) scale(1.08); } }
 @keyframes gaze-flash { 50% { opacity: 0.35; } }
 
+/* ------------------------------------------------------------------ wrath pop */
+.meter-panel.wrath { position: relative; }
+.wrath-pop {
+  position: absolute; right: 0.8em; bottom: -0.6em; padding: 0.15em 0.6em; border-radius: 1em; white-space: nowrap;
+  font-size: 0.85em; font-weight: 800; background: rgba(16, 9, 6, 0.92); border: 1px solid; pointer-events: none;
+  animation: wrath-pop 2.2s ease-out forwards; z-index: 3;
+}
+.wrath-pop.bad { color: #ffb08a; border-color: #ff5a2a; }
+.wrath-pop.good { color: #a8ffb0; border-color: #4ac06a; }
+@keyframes wrath-pop { 0% { opacity: 0; transform: translateY(0.6em); } 12% { opacity: 1; transform: translateY(0); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-0.4em); } }
+
+/* ------------------------------------------------------------------ status chips */
+.chips { position: absolute; left: 50%; top: calc(50% + 4.2em); transform: translateX(-50%); display: flex; gap: 0.4em; pointer-events: none; }
+.chip {
+  padding: 0.2em 0.7em; border-radius: 1em; font-size: 0.85em; font-weight: 700; white-space: nowrap;
+  background: rgba(16, 9, 6, 0.8); border: 1px solid rgba(255, 170, 60, 0.5); color: var(--ink);
+}
+.chip.warn { border-color: #ff5a3a; color: #ffc2a8; }
+
 /* ------------------------------------------------------------------ event notice (Episode 2) */
 .notice {
   position: absolute; top: 7.2em; left: 50%; transform: translateX(-50%);
@@ -522,3 +549,20 @@ html, body {
 .ep-tab small { font-family: var(--font-body, Inter, sans-serif); font-size: 0.68em; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.8; }
 .ep-tab:hover { color: var(--ink); border-color: var(--gold); }
 .ep-tab.on { color: var(--gold-hi); border-color: var(--gold); background: rgba(120, 40, 10, 0.55); box-shadow: 0 0 0.8em rgba(255, 110, 20, 0.35); }
+
+/* ------------------------------------------------------------------ end-of-round scoreboard */
+.scoreboard {
+  position: absolute; left: 50%; top: 18%; transform: translateX(-50%); min-width: 26em; padding: 1em 1.4em 1.1em;
+  background: rgba(16, 9, 6, 0.93); border: 1px solid rgba(255, 170, 60, 0.6); border-radius: 0.5em; box-shadow: 0 0.6em 2em rgba(0, 0, 0, 0.6);
+}
+.scoreboard h2 { margin: 0 0 0.2em; text-align: center; font-family: var(--font-display); color: #ffcf6a; letter-spacing: 0.08em; }
+.sb-pass { text-align: center; color: var(--ink-dim); margin-bottom: 0.7em; }
+.sb-pass b { color: #ffd36a; font-size: 1.2em; }
+.sb-row { display: grid; grid-template-columns: 5em 1fr 3em auto; gap: 0.6em; align-items: center; padding: 0.35em 0.4em; border-bottom: 1px solid rgba(184, 134, 47, 0.18); }
+.sb-name { font-weight: 800; }
+.sb-dish { color: var(--ink-dim); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-score { text-align: right; font-size: 1.25em; font-weight: 800; color: #ffe2a8; }
+.sb-row.you { background: rgba(255, 170, 60, 0.08); }
+.sb-row.under .sb-score { color: #ff8a6a; }
+.sb-row.worst { background: rgba(160, 150, 140, 0.25); }
+.sb-stone { font-family: var(--font-display); font-weight: 800; color: #d8d2c6; letter-spacing: 0.1em; }

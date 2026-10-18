@@ -69,6 +69,9 @@ export interface GorgonWorld {
 
 const tmp = new THREE.Vector3();
 
+/** Seconds you get to hold food up when he demands an inspection. */
+export const INSPECT_GRACE = 6;
+
 export class GorgonAI {
   pos = new THREE.Vector3();
   yaw = 0;
@@ -374,10 +377,10 @@ export class GorgonAI {
         lookAt = eyeP;
         break;
       case 'inspect':
-        pose = this.stateT < 3 ? 'armsCrossed' : 'point';
+        pose = this.stateT < INSPECT_GRACE ? 'armsCrossed' : 'point';
         lookAt = eyeP;
         this.faceToward(eyeP);
-        if (this.stateT > 3 && this.stateT - dt <= 3) {
+        if (this.stateT > INSPECT_GRACE && this.stateT - dt <= INSPECT_GRACE) {
           const r = this.world.inspectHeld();
           if (r === 'good') {
             this.say('inspectGood', 2);
@@ -392,7 +395,7 @@ export class GorgonAI {
             this.world.addWrath(6);
           }
         }
-        if (this.stateT > 5) this.backToPatrol();
+        if (this.stateT > INSPECT_GRACE + 2) this.backToPatrol();
         break;
       case 'gazeWindup': {
         const windup = t?.windup ?? 1.8;

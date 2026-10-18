@@ -58,6 +58,8 @@ export class Item {
   /** Small per-item state used by stations (e.g. pan flip animation). */
   anim = { flip: 0, flipSide: 0 };
   lastVy = 0;
+  /** Game time this food hit the floor (for the five-second rule). */
+  floorAt = 0;
   spawnTime = performance.now();
   private tints: THREE.Mesh[] = [];
   /** What this item is riding on (tray, trolley, or the base of an assembly), and where on it. */
@@ -124,6 +126,8 @@ export class Item {
   }
 
   private makeCollider(): RAPIER.Collider {
+    // The group may have moved since the last render (just spawned, just teleported): refresh before measuring.
+    this.group.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(this.visual, true);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3()).sub(this.group.position);

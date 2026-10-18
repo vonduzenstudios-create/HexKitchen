@@ -253,6 +253,8 @@ export class Hotel {
     if (f) {
       f.t += dt;
       const it = f.item;
+      // Solid again once it has cleared the toaster.
+      if (f.t > 0.15 && it.where === 'world' && this.d.items.list.includes(it)) it.collider.setEnabled(true);
       if (!f.caught && this.d.interact().held === it && f.t < 2) {
         f.caught = true;
         this.d.react('applause', 1);
@@ -291,7 +293,9 @@ export class Hotel {
     item.refreshTint();
     item.where = 'world';
     item.setKinematic(false);
-    item.body.setTranslation({ x: ts.slot.x, y: ts.slot.y + 0.1, z: ts.slot.z }, true);
+    // Ghost it out of the slot so the physics doesn't fight the toaster body it was sitting in.
+    item.collider.setEnabled(false);
+    item.body.setTranslation({ x: ts.slot.x, y: ts.slot.y + 0.14, z: ts.slot.z }, true);
     // Up, and a little toward wherever the cook is standing so a catch is possible.
     const toPlayer = this.d.player.position.clone().sub(ts.slot).setY(0);
     const lean = toPlayer.length() > 0.1 ? toPlayer.normalize().multiplyScalar(0.9) : new THREE.Vector3();

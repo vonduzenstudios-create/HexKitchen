@@ -109,6 +109,8 @@ export interface CookState {
   /** Oven (or toaster) doneness. */
   bake: number;
   floor: boolean;
+  /** Picked up off the floor inside five seconds: a small deduction, not a ruined dish. */
+  floorRule?: boolean;
 }
 
 export function freshCookState(): CookState {
@@ -214,6 +216,7 @@ export function evaluateDish(recipe: Recipe, plated: PlatedItem[]): DishResult {
   const issues: { key: LineKey; weight: number }[] = [];
   const breakdown: string[] = [];
   let floorCount = 0;
+  let score5 = 0;
   let placementSum = 0;
   for (const comp of recipe.components) {
     const idx = plated.findIndex((p, i) => !used.has(i) && p.kind === comp.kind);
@@ -229,6 +232,7 @@ export function evaluateDish(recipe: Recipe, plated: PlatedItem[]): DishResult {
     total += avg;
     placementSum += item.placement;
     if (item.cook.floor) floorCount++;
+    else if (item.cook.floorRule) score5++;
     comp.steps.forEach((st, i) => {
       const iss = stepIssue(item.cook, st);
       if (iss) issues.push({ key: iss, weight: 1 + (1 - scores[i]) * 2 });
@@ -239,7 +243,7 @@ export function evaluateDish(recipe: Recipe, plated: PlatedItem[]): DishResult {
   let score = (total / n) * 100;
   const placement = used.size ? placementSum / used.size : 0;
   score *= 0.88 + 0.12 * placement;
-  score -= floorCount * 20;
+  score -= floorCount * 20 + score5 * 4;
   score = Math.max(0, Math.min(100, Math.round(score)));
   if (floorCount) issues.push({ key: 'floor', weight: 2.5 });
   const grade = gradeFor(score);
