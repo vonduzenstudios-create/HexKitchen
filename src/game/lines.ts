@@ -38,7 +38,9 @@ export type LineKey =
   | 'verdictWin'
   | 'verdictLose'
   | 'petrified'
-  | 'shakerLid';
+  | 'shakerLid'
+  | 'burning'
+  | 'emptyPlate';
 
 export const LINES: Record<LineKey, string[]> = {
   intro: [
@@ -189,6 +191,12 @@ export const LINES: Record<LineKey, string[]> = {
   petrified: [
     "And THAT is why you never look a chef in the eye. Next!",
     "Another statue for the collection. Somebody move it by the window.",
+  ],
+  burning: [
+    "It's BURNING! Can you not SMELL that?",
+  ],
+  emptyPlate: [
+    "There's nothing on the plate! Are you serving me AIR?",
   ],
   shakerLid: [
     "The lid fell OFF? You've just salted the entire OCEAN!",

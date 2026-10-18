@@ -124,7 +124,7 @@ export class Game {
         this.react('laugh', 0.8);
         void it;
       },
-      burning: () => this.gorgonSay("It's BURNING! Can you not SMELL that?", true),
+      burning: () => this.gorgonSay('burning'),
       fire: () => {
         this.stats.fires++;
         this.addWrath(15);
@@ -518,7 +518,7 @@ export class Game {
         music.sting('fail');
       }
     }
-    if (!servedAny) this.gorgonSay("There's nothing on the plate! Are you serving me AIR?", true, 2);
+    if (!servedAny) this.gorgonSay('emptyPlate', false, 2);
     else if (this.tickets.every((t) => t.served)) this.roundDone?.();
   }
 

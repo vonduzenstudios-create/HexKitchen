@@ -2,7 +2,7 @@
 
 A first-person cooking horror comedy for the browser. You are a contestant on **Hex Kitchen**, hosted by Gorgon Ramsey, a furious celebrity chef with a head of hissing snakes. Cook three rounds with your own hands, don't meet his gaze, and try not to end up as kitchen decor.
 
-Every model, texture, sound effect, music cue and line of Gorgon's voice is generated in code. There are no asset files.
+Every model, texture, sound effect and music cue is generated in code. Gorgon's voice comes from a formant synthesizer, or from AI-generated recordings when they have been rendered (see below).
 
 ## Play
 
@@ -19,6 +19,7 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 | Input | Action |
 | --- | --- |
 | WASD + mouse | Move and look |
+| Shift | Sprint |
 | Click | Grab, place, or drop. Flick the mouse while dropping to throw |
 | Hold click on a station | Work it: swipe down on the beat to chop, shake left-right to season, flick up to flip |
 | Right click | Raise the polished pan (hanging by the cutting board) to reflect Gorgon's gaze |
@@ -37,6 +38,10 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 **Gorgon's Wrath** rises with bad dishes, burnt food, dropped food and fires, and makes his interruptions more frequent. **Petrification** rises when you fail dishes or meet his gaze; at 100% you become a statue. Perfect dishes calm him and chip the stone away.
 
 His interruptions: **inspections** (turn around and show him what you're holding), the **petrifying gaze** (look away, hide behind a counter, or reflect it with the polished pan right as it lands), **sabotage** (he knocks food off your station or bins your plate), and **Stone Cold** (after each round he petrifies a rival, whose statue stays in your kitchen).
+
+## Gorgon's recorded voice
+
+Gorgon can use a designed AI chef voice (not a clone of anyone) from ElevenLabs instead of the synthesizer. Add an `ELEVENLABS_API_KEY` Actions secret, put your voice ID in `voice.config.json`, and push. The **Voice** workflow renders every line in `src/game/lines.ts` to `public/voice/`, commits them and redeploys. Lines without a recording fall back to the synth. Locally: `ELEVENLABS_API_KEY=... node --experimental-strip-types scripts/generate-voice.mjs`.
 
 ## Tech
 
