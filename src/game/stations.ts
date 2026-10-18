@@ -6,13 +6,15 @@ import { INGREDIENTS } from './ingredients';
 import type { Item, Items } from './items';
 import { COUNTER_TOP, type Kitchen, type StationId } from './kitchen';
 import type { Particles } from './particles';
-import { SEASON_TARGET, SEASON_WINDOW, type Recipe, type PlatedItem } from './recipes';
+import { BAKE_WINDOW, SEASON_TARGET, SEASON_WINDOW, type Recipe, type PlatedItem } from './recipes';
 
 export const CHOPS_NEEDED = 5;
 const BEAT = 0.75; // seconds between chop beats
 const PAN_RATE = 1 / 6.5; // doneness per second on the down side
 const BOIL_RATE = 1 / 7;
 const FRY_RATE = 1 / 6;
+/** Oven: about 22 s to golden, with a long window before it burns. */
+export const BAKE_RATE = 1 / 22;
 
 export type PlateId = 'plateA' | 'plateB';
 export const WORKABLE: StationId[] = ['board', 'prep', 'pan'];
@@ -54,6 +56,8 @@ interface Slot {
   item: Item | null;
   placement: number;
   ghost: THREE.Mesh;
+  /** Filled automatically when its assembly base is plated (tomato on the toast). */
+  part: boolean;
 }
 
 const SLOT_LAYOUT: Record<number, [number, number][]> = {
@@ -66,6 +70,12 @@ const SLOT_LAYOUT: Record<number, [number, number][]> = {
     [-0.1, 0.06],
     [0.1, 0.06],
     [0, -0.1],
+  ],
+  4: [
+    [-0.06, 0.02],
+    [-0.06, 0.02],
+    [-0.06, 0.02],
+    [0.11, -0.04],
   ],
 };
 
@@ -80,9 +90,15 @@ export class Stations {
   fireAt: StationId | null = null;
   /** Oven mitts on: every cut lands off the beat. */
   mittsOn = false;
+  /** The oven door is open (set by the game): baking slows and heat escapes. */
+  ovenDoorOpen = false;
+  /** Seconds until everything in the oven is golden, or null when it's empty. */
+  ovenTimeLeft: number | null = null;
+  /** Everything in the oven has reached the golden window. */
+  ovenReady = false;
   /** Burning stations and their intensity 0..1. Fires keep going without fuel and spread along the line. */
   readonly fires = new Map<StationId, { level: number; age: number; light: THREE.PointLight }>();
-  private loops: Partial<Record<'sizzle' | 'boil' | 'fryer' | 'fire', LoopHandle>> = {};
+  private loops: Partial<Record<'sizzle' | 'boil' | 'fryer' | 'fire' | 'oven', LoopHandle>> = {};
   private time = 0;
   private dyHist: number[] = [0, 0, 0];
   private chopArmed = true;
@@ -132,6 +148,9 @@ export class Stations {
     const isPlate = id === 'plateA' || id === 'plateB';
     if (item.kind === 'plate') return isPlate && !this.hasPlate[id as PlateId];
     if (this.fires.has(id)) return false;
+    // The oven takes whole trays, nothing else.
+    if (id === 'oven') return item.kind === 'tray' && !this.isFull('oven');
+    if (item.kind === 'tray') return false;
     if (!item.isIngredient) return false;
     // Food goes on a plate, not on the bare pass.
     if (isPlate && !this.hasPlate[id as PlateId]) return false;
@@ -142,7 +161,7 @@ export class Stations {
   setPlate(id: PlateId, on: boolean): void {
     this.hasPlate[id] = on;
     this.kitchen.passPlates[id].visible = on;
-    for (const s of this.plates[id].slots) s.ghost.visible = on && !s.item;
+    for (const s of this.plates[id].slots) s.ghost.visible = on && !s.item && !s.part;
   }
 
   /** Put an item into a station. aim is where the crosshair hit, for plating accuracy. */
@@ -176,6 +195,15 @@ export class Stations {
         slot.item = item;
         slot.placement = Math.max(0.4, Math.min(1, 1 - (d - 0.04) / 0.3));
         slot.ghost.visible = false;
+        // An assembled dish fills its parts' slots too (they ride on the base).
+        for (const c of item.withCarried().slice(1)) {
+          const ps = plate.slots.find((s) => !s.item && s.kind === c.kind);
+          if (ps) {
+            ps.item = c;
+            ps.placement = slot.placement;
+            ps.ghost.visible = false;
+          }
+        }
         item.drive(target, new THREE.Quaternion());
         audio.play('plate', { pos: target, volume: 0.7 });
       } else {
@@ -186,12 +214,18 @@ export class Stations {
       return;
     }
     item.drive(this.restPos(id), new THREE.Quaternion());
+    if (id === 'oven') {
+      audio.play('clang', { pos: base, volume: 0.6, pitch: 0.8 });
+      return;
+    }
     audio.play(id === 'pot' || id === 'fryer' ? 'splash' : 'drop', { pos: base, volume: 0.6 });
     if (id === 'pan' || id === 'fryer') audio.play('fireIgnite', { pos: base, volume: 0.25 });
   }
 
   private restPos(id: StationId): THREE.Vector3 {
     const b = this.kitchen.stations[id];
+    // The oven's station point is the rack itself.
+    if (id === 'oven') return (this.kitchen.oven?.rack ?? b).clone();
     const y = { board: COUNTER_TOP + 0.045, prep: COUNTER_TOP + 0.025, pan: COUNTER_TOP + 0.08, pot: COUNTER_TOP + 0.16, fryer: COUNTER_TOP + 0.15 }[
       id as 'board'
     ];
@@ -206,9 +240,10 @@ export class Stations {
     const i = list.indexOf(item);
     if (i >= 0) list.splice(i, 1);
     if (id === 'plateA' || id === 'plateB') {
-      for (const s of this.plates[id].slots) if (s.item === item) {
+      const riders = item.withCarried();
+      for (const s of this.plates[id].slots) if (s.item && riders.includes(s.item)) {
         s.item = null;
-        s.ghost.visible = true;
+        s.ghost.visible = !s.part;
       }
     }
     if (id === 'board') this.clearSlices(item);
@@ -234,9 +269,10 @@ export class Stations {
       // The pass is approached from -X, so lay slots out in the plate's local frame accordingly.
       const offset = new THREE.Vector3(z, 0, -x);
       ghost.position.set(base.x + offset.x, COUNTER_TOP + 0.03, base.z + offset.z);
-      ghost.visible = this.hasPlate[plate];
+      const part = !!c.onto;
+      ghost.visible = this.hasPlate[plate] && !part;
       this.scene.add(ghost);
-      p.slots.push({ kind: c.kind, offset, item: null, placement: 0, ghost });
+      p.slots.push({ kind: c.kind, offset, item: null, placement: 0, ghost, part });
     });
   }
 
@@ -245,12 +281,14 @@ export class Stations {
     const p = this.plates[plate];
     const out: PlatedItem[] = [];
     const items = this.occupant[plate].slice();
-    for (const it of items) {
-      if (!it.isIngredient) continue;
-      const slot = p.slots.find((s) => s.item === it);
-      out.push({ kind: it.kind as PlatedItem['kind'], cook: { ...it.cook, fry: [...it.cook.fry] as [number, number] }, placement: slot ? slot.placement : 0.6 });
-      this.take(it);
-      this.items.remove(it);
+    for (const root of items) {
+      for (const it of root.withCarried()) {
+        if (!it.isIngredient) continue;
+        const slot = p.slots.find((s) => s.item === it);
+        out.push({ kind: it.kind as PlatedItem['kind'], cook: { ...it.cook, fry: [...it.cook.fry] as [number, number] }, placement: slot ? slot.placement : 0.6 });
+      }
+      this.take(root);
+      this.items.remove(root);
     }
     // The plate goes out with the dish.
     this.setPlate(plate, false);
@@ -345,8 +383,48 @@ export class Stations {
     }
     this.loops.fryer?.setVolume(fryItem ? 0.6 : 0.05);
 
+    this.updateOven(dt);
+
     // Plate ghost markers bob gently so players notice them.
     for (const p of Object.values(this.plates)) for (const sl of p.slots) sl.ghost.position.y = COUNTER_TOP + 0.03 + Math.sin(this.time * 3) * 0.004;
+  }
+
+  /** Bake every ingredient on the tray in the oven, and work out the clip-on timer. */
+  private updateOven(dt: number): void {
+    const tray = this.occupant.oven[0];
+    if (!tray) {
+      this.ovenTimeLeft = null;
+      this.ovenReady = false;
+      this.loops.oven?.setVolume(0);
+      return;
+    }
+    tray.drive(this.restPos('oven'), new THREE.Quaternion());
+    const food = tray.withCarried().filter((i) => i.isIngredient);
+    const rate = BAKE_RATE * (this.ovenDoorOpen ? 0.4 : 1);
+    let least = Infinity;
+    let most = 0;
+    for (const it of food) {
+      it.cook.bake += dt * rate;
+      it.refreshTint();
+      least = Math.min(least, it.cook.bake);
+      most = Math.max(most, it.cook.bake);
+    }
+    // Hidden parts inside an assembly bake along with it but the base is what you see.
+    const visible = food.filter((i) => !i.hiddenInAssembly);
+    this.ovenTimeLeft = food.length ? Math.max(0, (BAKE_WINDOW[0] - least) / BAKE_RATE) : null;
+    this.ovenReady = food.length > 0 && least >= BAKE_WINDOW[0];
+    this.loops.oven ??= audio.loop('sizzle', { pos: this.kitchen.stations.oven, volume: 0 });
+    this.loops.oven.setVolume(food.length ? 0.15 + Math.min(0.5, most * 0.35) : 0.05);
+    const rack = this.kitchen.stations.oven;
+    if (most > BAKE_WINDOW[1] && Math.random() < dt * (most > BAKE_WINDOW[1] + 0.3 ? 16 : 5)) {
+      this.particles.emit(rack.clone().add(new THREE.Vector3(0, 0.45, 0)), { color: most > BAKE_WINDOW[1] + 0.3 ? 0x2a2a2a : 0x9a9a9a, count: 1, up: 0.6, speed: 0.12, life: 1.6, jitter: 0.2 });
+    }
+    const burnt = visible.find((i) => i.cook.bake > BAKE_WINDOW[1] + 0.25);
+    if (burnt && !this.burnWarned.has(burnt.id)) {
+      this.burnWarned.add(burnt.id);
+      this.events.burning(burnt);
+    }
+    if (most > 2.1 && !this.fires.has('oven')) this.ignite('oven');
   }
 
   ignite(id: StationId, spread = false): void {
@@ -566,8 +644,22 @@ export class Stations {
       case 'fryer':
         if (!item) return { title: 'Deep Fryer', hint: 'Drop chopped potato in to make fries', value: 0, max: 2 };
         return { title: `Deep-frying ${item.name}`, hint: 'Grab it out when golden', value: item.cook.deepfry, max: 2, zone: [0.78, 1.22] };
-      case 'oven':
-        return null;
+      case 'oven': {
+        const tray = this.occupant.oven[0];
+        if (!tray) return { title: 'Oven', hint: 'Load food on a sheet tray, then slide the tray in', value: 0, max: 2 };
+        const food = tray.withCarried().filter((i) => i.isIngredient && !i.hiddenInAssembly);
+        if (!food.length) return { title: 'Oven: empty tray', hint: 'Put food on the tray first', value: 0, max: 2 };
+        const least = Math.min(...food.map((i) => i.cook.bake));
+        const most = Math.max(...food.map((i) => i.cook.bake));
+        return {
+          title: `Baking ${food.length === 1 ? food[0].name : `${food.length} items`}`,
+          hint: this.ovenReady ? (most > BAKE_WINDOW[1] ? 'Burning! Take the tray out NOW (mitts on)' : 'Golden! Take the tray out (mitts on)') : 'Wait for the ding. Golden is the green band',
+          value: most > BAKE_WINDOW[1] ? most : least,
+          max: 2,
+          zone: BAKE_WINDOW,
+          sub: this.ovenTimeLeft && this.ovenTimeLeft > 0 ? `${Math.ceil(this.ovenTimeLeft)}s to golden` : 'Ready',
+        };
+      }
       case 'plateA':
       case 'plateB': {
         const p = this.plates[id];

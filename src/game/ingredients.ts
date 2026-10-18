@@ -4,7 +4,19 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mat } from '../engine/psx';
 import { canvasTexture } from '../engine/textures';
 
-export type IngredientKind = 'lettuce' | 'bread' | 'tomato' | 'potato' | 'pasta' | 'steak' | 'beef' | 'mushroom' | 'greens';
+export type IngredientKind =
+  | 'lettuce'
+  | 'bread'
+  | 'tomato'
+  | 'potato'
+  | 'pasta'
+  | 'steak'
+  | 'beef'
+  | 'mushroom'
+  | 'greens'
+  | 'sourdough'
+  | 'cheese'
+  | 'pastry';
 
 export interface IngredientDef {
   name: string;
@@ -1279,6 +1291,924 @@ const snippedGeo = once(() => {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Episode 2 (The Last Resort): bakery and oven models.
+// ---------------------------------------------------------------------------------------------
+
+/** Split a geometry by its groups, merging groups that share a material index. */
+function splitByMaterial(geo0: THREE.BufferGeometry): THREE.BufferGeometry[] {
+  const geo = geo0.index ? geo0.toNonIndexed() : geo0;
+  const byMat = new Map<number, [number, number][]>();
+  for (const g of geo.groups) {
+    const k = g.materialIndex ?? 0;
+    if (!byMat.has(k)) byMat.set(k, []);
+    byMat.get(k)!.push([g.start, g.count]);
+  }
+  const out: THREE.BufferGeometry[] = [];
+  for (const k of [...byMat.keys()].sort()) {
+    const ranges = byMat.get(k)!;
+    const g = new THREE.BufferGeometry();
+    for (const name of Object.keys(geo.attributes)) {
+      const a = geo.attributes[name] as THREE.BufferAttribute;
+      const n = a.itemSize;
+      const parts: number[] = [];
+      for (const [s, c] of ranges) for (let i = s * n; i < (s + c) * n; i++) parts.push(a.array[i] as number);
+      g.setAttribute(name, new THREE.Float32BufferAttribute(parts, n));
+    }
+    out.push(g);
+  }
+  return out;
+}
+
+/** Keep only the triangles of a non-indexed geometry that pass the test (centroid, face normal). */
+function filterTris(geo0: THREE.BufferGeometry, keep: (c: THREE.Vector3, n: THREE.Vector3) => boolean): THREE.BufferGeometry {
+  const geo = geo0.index ? geo0.toNonIndexed() : geo0;
+  const p = geo.attributes.position;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const d = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const tris: number[] = [];
+  for (let i = 0; i < p.count; i += 3) {
+    a.fromBufferAttribute(p, i);
+    b.fromBufferAttribute(p, i + 1);
+    d.fromBufferAttribute(p, i + 2);
+    c.copy(a).add(b).add(d).multiplyScalar(1 / 3);
+    n.subVectors(b, a).cross(d.clone().sub(a)).normalize();
+    if (keep(c, n)) tris.push(i);
+  }
+  const g = new THREE.BufferGeometry();
+  for (const name of Object.keys(geo.attributes)) {
+    const at = geo.attributes[name] as THREE.BufferAttribute;
+    const k = at.itemSize;
+    const arr = new Float32Array(tris.length * 3 * k);
+    tris.forEach((t, j) => {
+      for (let q = 0; q < 3 * k; q++) arr[j * 3 * k + q] = at.array[t * k + q] as number;
+    });
+    g.setAttribute(name, new THREE.Float32BufferAttribute(arr, k));
+  }
+  return g;
+}
+
+/** Use the colour map as a bump map too, so pores, scores and dimples catch the light. */
+function bumpy<M extends THREE.Mesh>(m: M, scale: number): M {
+  const mm = m.material as THREE.MeshStandardMaterial;
+  mm.bumpMap = mm.map;
+  mm.bumpScale = scale;
+  return m;
+}
+
+/** Tinted mesh with its own browning target (honoured by Item.refreshTint when it reads userData.cooked). */
+function browns<M extends THREE.Mesh>(m: M, cooked: number): M {
+  m.userData.tint = true;
+  m.userData.cooked = cooked;
+  return m;
+}
+
+const frac = (x: number) => x - Math.floor(x);
+
+// ---- Sourdough boule ---------------------------------------------------------------------------
+
+const BOULE_R = 0.088;
+
+/** Cross-shaped "ear" scores on the crown, in sphere-direction space. */
+function bouleScore(d: THREE.Vector3): { groove: number; lip: number; depth: number } {
+  const ca = Math.cos(0.4);
+  const sa = Math.sin(0.4);
+  const ax = d.x * ca - d.z * sa;
+  const az = d.x * sa + d.z * ca;
+  const crown = smooth(0.25, 0.55, d.y);
+  let groove = 0;
+  let lip = 0;
+  for (const [along, across] of [
+    [ax, az],
+    [az, ax],
+  ]) {
+    const L = 0.62;
+    if (Math.abs(along) > L) continue;
+    const prof = 1 - (along / L) ** 2;
+    const w = 0.05 * (0.35 + 0.65 * prof);
+    groove = Math.max(groove, prof * Math.exp(-((across / w) ** 2)));
+    lip = Math.max(lip, prof * Math.exp(-(((Math.abs(across) - w * 1.7) / (w * 0.75)) ** 2)));
+  }
+  groove *= crown;
+  lip *= crown;
+  return { groove: smooth(0.2, 0.75, groove), lip: smooth(0.15, 0.8, lip) * (1 - groove), depth: -0.009 * groove + 0.0035 * lip };
+}
+
+const bouleGeo = once(() => {
+  const g = surface(48, 32, (u, v, o) => {
+    const d = sphDir(u, v, D).clone();
+    const s = bouleScore(d);
+    const r = BOULE_R * (1 + 0.03 * fbm(d.x * 2.2, d.y * 2.2, d.z * 2.2, 1300)) + s.depth;
+    const y = d.y > 0 ? d.y * 0.68 : d.y * 0.24 * (1 - 0.35 * Math.pow(-d.y, 3));
+    o.set(d.x * r, y * r, d.z * r);
+  });
+  sit(g);
+  return g;
+});
+
+// ---- Sourdough slice ---------------------------------------------------------------------------
+
+const SL_AX = 0.06;
+const SL_TOP = 0.055;
+const SL_BOT = 0.045;
+const SL_DEPTH = 0.018;
+const SL_BEVEL = 0.002;
+
+/** Superellipse "radius" of a slice point in shape coords (1 on the outline). */
+function sliceE(sx: number, sy: number): number {
+  const by = sy > 0 ? SL_TOP : SL_BOT;
+  const p = sy > 0 ? 2 : 3.2;
+  return Math.pow(Math.abs(sx / SL_AX) ** p + Math.abs(sy / by) ** p, 1 / p);
+}
+
+const sliceParts = once(() => {
+  const shp = new THREE.Shape();
+  const N = 56;
+  for (let i = 0; i < N; i++) {
+    const th = (i / N) * TAU;
+    const c = Math.cos(th);
+    const s = Math.sin(th);
+    const r = 1 / sliceE(c, s);
+    const k = 1 + 0.012 * noise3(c * 3, s * 3, 0, 1310);
+    if (i === 0) shp.moveTo(c * r * k, s * r * k);
+    else shp.lineTo(c * r * k, s * r * k);
+  }
+  shp.closePath();
+  const ext = new THREE.ExtrudeGeometry(shp, { depth: SL_DEPTH, bevelEnabled: true, bevelThickness: SL_BEVEL, bevelSize: 0.0016, bevelSegments: 2, curveSegments: 4 });
+  const [caps, sides] = splitByMaterial(ext);
+  // Crumb faces: planar UV in shape space; crust: angle around x depth.
+  const cp = caps.attributes.position;
+  const cuv = new Float32Array(cp.count * 2);
+  for (let i = 0; i < cp.count; i++) {
+    cuv[i * 2] = (cp.getX(i) + 0.065) / 0.13;
+    cuv[i * 2 + 1] = (cp.getY(i) + 0.06) / 0.12;
+  }
+  caps.setAttribute('uv', new THREE.Float32BufferAttribute(cuv, 2));
+  const sp = sides.attributes.position;
+  const suv = new Float32Array(sp.count * 2);
+  for (let i = 0; i < sp.count; i++) {
+    suv[i * 2] = Math.atan2(sp.getY(i), sp.getX(i)) / TAU + 0.5;
+    suv[i * 2 + 1] = (sp.getZ(i) + SL_BEVEL) / (SL_DEPTH + 2 * SL_BEVEL);
+  }
+  sides.setAttribute('uv', new THREE.Float32BufferAttribute(suv, 2));
+  for (const g of [caps, sides]) {
+    g.rotateX(-Math.PI / 2);
+    g.computeVertexNormals();
+  }
+  const both = merge([caps, sides]);
+  both.computeBoundingBox();
+  const b = both.boundingBox!;
+  const off = new THREE.Vector3(-(b.min.x + b.max.x) / 2, -b.min.y, -(b.min.z + b.max.z) / 2);
+  caps.translate(off.x, off.y, off.z);
+  sides.translate(off.x, off.y, off.z);
+  return { crumb: caps, crust: sides, top: b.max.y - b.min.y };
+});
+
+// ---- Cheese ------------------------------------------------------------------------------------
+
+const CHEESE_R = 0.13;
+const CHEESE_A = 0.62;
+const CHEESE_H = 0.056;
+
+const cheeseParts = once(() => {
+  const shp = new THREE.Shape();
+  shp.moveTo(0, 0);
+  const segs = 6;
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const a = -CHEESE_A / 2;
+    shp.lineTo(Math.cos(a) * CHEESE_R * t, Math.sin(a) * CHEESE_R * t);
+  }
+  for (let i = 1; i <= 10; i++) {
+    const a = -CHEESE_A / 2 + (CHEESE_A * i) / 10;
+    shp.lineTo(Math.cos(a) * CHEESE_R, Math.sin(a) * CHEESE_R);
+  }
+  for (let i = segs - 1; i >= 1; i--) {
+    const t = i / segs;
+    const a = CHEESE_A / 2;
+    shp.lineTo(Math.cos(a) * CHEESE_R * t, Math.sin(a) * CHEESE_R * t);
+  }
+  shp.closePath();
+  const ext = new THREE.ExtrudeGeometry(shp, { depth: CHEESE_H - 0.004, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.0018, bevelSegments: 2, curveSegments: 4 });
+  ext.rotateX(-Math.PI / 2);
+  const g = ext.index ? ext.toNonIndexed() : ext;
+  sit(g);
+  g.computeBoundingBox();
+  const midX = (g.boundingBox!.min.x + g.boundingBox!.max.x) / 2;
+  // Apex sits at the minimum x after sit(); the arc (rind) is the far end.
+  const apexX = g.boundingBox!.min.x;
+  const isRind = (c: THREE.Vector3, n: THREE.Vector3) => {
+    if (n.y < -0.6) return true; // underside
+    const dx = c.x - apexX;
+    const r = Math.hypot(dx, c.z);
+    const radial = Math.abs(n.x * (dx / r) + n.z * (c.z / r));
+    return r > CHEESE_R * 0.9 && radial > 0.75 && Math.abs(n.y) < 0.6;
+  };
+  const rind = filterTris(g, isRind);
+  const paste = filterTris(g, (c, n) => !isRind(c, n));
+  // Paste UVs: world-space planar per face orientation, tiled every 7 cm.
+  const pp = paste.attributes.position;
+  const pn = new THREE.Vector3();
+  paste.computeVertexNormals();
+  const nrm = paste.attributes.normal;
+  const uv = new Float32Array(pp.count * 2);
+  for (let i = 0; i < pp.count; i++) {
+    pn.fromBufferAttribute(nrm, i);
+    const x = pp.getX(i);
+    const y = pp.getY(i);
+    const z = pp.getZ(i);
+    if (Math.abs(pn.y) > 0.6) {
+      uv[i * 2] = x / 0.07;
+      uv[i * 2 + 1] = z / 0.07;
+    } else {
+      uv[i * 2] = (x * -pn.z + z * pn.x) / 0.07;
+      uv[i * 2 + 1] = y / 0.07;
+    }
+  }
+  paste.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  planarUV(rind, 'x', 'y');
+  rind.computeVertexNormals();
+  void midX;
+  return { paste, rind };
+});
+
+/** Thin curled strips (for grated cheese), in a few variants. */
+const gratedStrips = once(() => {
+  const r = rng(1400);
+  const out: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 5; i++) {
+    const L = 0.018 + r() * 0.016;
+    const w = 0.0028 + r() * 0.0012;
+    const curl = 0.002 + r() * 0.004;
+    const twist = (r() - 0.5) * 2;
+    out.push(
+      surface(8, 1, (u, v, o) => {
+        const a = twist * (u - 0.5);
+        const z = (v - 0.5) * w;
+        const y = curl * Math.sin(Math.PI * u);
+        o.set((u - 0.5) * L, y * Math.cos(a) - z * Math.sin(a), y * Math.sin(a) + z * Math.cos(a));
+      }),
+    );
+  }
+  return out;
+});
+
+/** A heap of grated cheese strips. `height(x, z)` gives the surface they rest on. */
+function gratedHeap(n: number, radius: number, peak: number, seed: number, height: (x: number, z: number) => number = () => 0, scale = 1): THREE.BufferGeometry {
+  const strips = scale === 1 ? gratedStrips() : gratedStrips().map((g) => g.clone().scale(scale, scale, scale));
+  const r = rng(seed);
+  const pieces: Piece[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.39996 + r() * 0.3;
+    const d = Math.sqrt((i + 0.5) / n) * radius;
+    const hump = peak * (1 - (d / radius) ** 2);
+    const shade = 0.86 + r() * 0.16;
+    const x = Math.cos(a) * d;
+    const z = Math.sin(a) * d;
+    pieces.push({
+      geo: strips[i % strips.length],
+      x,
+      y: height(x, z) + 0.0015 + hump * (0.6 + 0.4 * r()),
+      z,
+      rx: (r() - 0.5) * 0.9,
+      ry: r() * Math.PI,
+      rz: (r() - 0.5) * 0.6,
+      col: new THREE.Color(shade, shade * (0.97 + r() * 0.04), shade * 0.9),
+    });
+  }
+  return assemble(pieces, false);
+}
+
+const gratedGeo = once(() => {
+  const g = gratedHeap(120, 0.042, 0.032, 1410);
+  sit(g);
+  return g;
+});
+
+// ---- Puff pastry sheet --------------------------------------------------------------------------
+
+const PASTRY = { x: 0.24, z: 0.18, y: 0.008 };
+
+const pastryGeo = once(() => {
+  const g = new THREE.BoxGeometry(PASTRY.x, PASTRY.y, PASTRY.z, 60, 1, 45);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i);
+    const y = p.getY(i);
+    const z = p.getZ(i);
+    const top = y > 0;
+    // Gently wavy cut edges and a soft pillow with dimples on top.
+    const ex = 0.0018 * noise3(z * 40, 0, 0, 1500);
+    const ez = 0.0018 * noise3(x * 40, 0, 1, 1501);
+    let ny = y;
+    if (top) {
+      const ux = (x / PASTRY.x + 0.5);
+      const crease = Math.exp(-(((ux - 1 / 3) / 0.012) ** 2)) + Math.exp(-(((ux - 2 / 3) / 0.012) ** 2));
+      const edge = smooth(0, 0.012, Math.min(PASTRY.x / 2 - Math.abs(x), PASTRY.z / 2 - Math.abs(z)));
+      ny = y * (0.75 + 0.25 * edge) + 0.0009 * fbm(x * 45, z * 45, 0, 1502) - 0.0012 * crease;
+    }
+    p.setXYZ(i, x + (Math.abs(x) > PASTRY.x / 2 - 0.001 ? Math.sign(x) * ex : 0), ny, z + (Math.abs(z) > PASTRY.z / 2 - 0.001 ? Math.sign(z) * ez : 0));
+  }
+  g.computeVertexNormals();
+  sit(g);
+  return g;
+});
+
+// ---- Sheet pan ---------------------------------------------------------------------------------
+
+export const TRAY_SIZE = { x: 0.45, z: 0.32, rim: 0.021 };
+const TRAY_WALL = 0.018;
+const TRAY_CORNER = 0.022;
+
+/** Point on a rounded rectangle (half extents hx, hz, corner radius rc), s in 0..1 around; also outward normal. */
+function roundRect(s: number, hx: number, hz: number, rc: number, out: THREE.Vector3, nrm: THREE.Vector3): void {
+  const sx = hx - rc;
+  const sz = hz - rc;
+  const arc = (Math.PI / 2) * rc;
+  const total = 4 * sx + 4 * sz + 4 * arc;
+  let d = frac(s) * total;
+  const segs: [number, (t: number) => void][] = [
+    [2 * sz, (t) => (out.set(hx, 0, -sz + t), nrm.set(1, 0, 0))],
+    [arc, (t) => { const a = t / rc; nrm.set(Math.cos(a), 0, Math.sin(a)); out.set(sx + nrm.x * rc, 0, sz + nrm.z * rc); }],
+    [2 * sx, (t) => (out.set(sx - t, 0, hz), nrm.set(0, 0, 1))],
+    [arc, (t) => { const a = Math.PI / 2 + t / rc; nrm.set(Math.cos(a), 0, Math.sin(a)); out.set(-sx + nrm.x * rc, 0, sz + nrm.z * rc); }],
+    [2 * sz, (t) => (out.set(-hx, 0, sz - t), nrm.set(-1, 0, 0))],
+    [arc, (t) => { const a = Math.PI + t / rc; nrm.set(Math.cos(a), 0, Math.sin(a)); out.set(-sx + nrm.x * rc, 0, -sz + nrm.z * rc); }],
+    [2 * sx, (t) => (out.set(-sx + t, 0, -hz), nrm.set(0, 0, -1))],
+    [arc, (t) => { const a = Math.PI * 1.5 + t / rc; nrm.set(Math.cos(a), 0, Math.sin(a)); out.set(sx + nrm.x * rc, 0, -sz + nrm.z * rc); }],
+  ];
+  for (const [len, f] of segs) {
+    if (d <= len) return f(d);
+    d -= len;
+  }
+  segs[0][1](0);
+}
+
+const trayParts = once(() => {
+  const hx = TRAY_SIZE.x / 2;
+  const hz = TRAY_SIZE.z / 2;
+  const inBot = 0.012;
+  const inTop = 0.004;
+  const bead = 0.0032;
+  const P = new THREE.Vector3();
+  const Nn = new THREE.Vector3();
+  const NU = 160;
+  const wall = surface(NU, 3, (u, v, o) => {
+    const ins = mix(inBot, inTop, v);
+    roundRect(u, hx - ins, hz - ins, TRAY_CORNER - ins * 0.5, P, Nn);
+    o.set(P.x, v * TRAY_WALL + 0.0006, P.z);
+  }, (u, v) => [u * 8, v * 0.08]);
+  const beadGeo = surface(NU, 8, (u, v, o) => {
+    roundRect(u, hx - inTop, hz - inTop, TRAY_CORNER - inTop * 0.5, P, Nn);
+    const a = TAU * v;
+    o.set(P.x + Nn.x * bead * (1 + Math.cos(a)), TRAY_WALL + bead * Math.sin(a), P.z + Nn.z * bead * (1 + Math.cos(a)));
+  }, (u, v) => [u * 8, v * 0.02]);
+  const shp = new THREE.Shape();
+  for (let i = 0; i <= NU; i++) {
+    roundRect(i / NU, hx - inBot, hz - inBot, TRAY_CORNER - inBot * 0.5, P, Nn);
+    if (i === 0) shp.moveTo(P.x, -P.z);
+    else shp.lineTo(P.x, -P.z);
+  }
+  const base = new THREE.ExtrudeGeometry(shp, { depth: 0.0012, bevelEnabled: false });
+  base.rotateX(-Math.PI / 2);
+  const bp = base.attributes.position;
+  const buv = new Float32Array(bp.count * 2);
+  for (let i = 0; i < bp.count; i++) {
+    buv[i * 2] = bp.getX(i) / TRAY_SIZE.x + 0.5;
+    buv[i * 2 + 1] = bp.getZ(i) / TRAY_SIZE.z + 0.5;
+  }
+  base.setAttribute('uv', new THREE.Float32BufferAttribute(buv, 2));
+  return { base, wall, bead: beadGeo };
+});
+
+// ---- Beef Wellington ---------------------------------------------------------------------------
+
+const WELL_L = 0.22;
+const WELL_W = 0.045;
+const WELL_TOP = 0.062;
+const WELL_BOT = 0.018;
+const WELL_CIRC = 0.27;
+
+/** Diagonal lattice scoring weight at (t along, w around). */
+function wellLattice(t: number, w: number): number {
+  const X = t * WELL_L;
+  const Y = (w - 0.5) * WELL_CIRC;
+  const sp = 0.026;
+  const l1 = Math.abs(frac((X + Y) / sp) - 0.5) * 2;
+  const l2 = Math.abs(frac((X - Y) / sp) - 0.5) * 2;
+  const line = Math.max(1 - smooth(0, 0.12, 1 - l1), 1 - smooth(0, 0.12, 1 - l2));
+  const top = smooth(-0.35, 0.15, -Math.cos(TAU * w));
+  const ends = smooth(0.06, 0.16, Math.min(t, 1 - t));
+  return line * top * ends;
+}
+
+function wellPoint(t: number, w: number, o: THREE.Vector3): THREE.Vector3 {
+  const a = TAU * w;
+  const ny = -Math.cos(a);
+  const nz = Math.sin(a);
+  const sy = Math.sign(ny) * Math.pow(Math.abs(ny), 0.8);
+  const sz = Math.sign(nz) * Math.pow(Math.abs(nz), 0.8);
+  const tc = Math.min(1, Math.max(0, t));
+  const prof = Math.pow(Math.sin(Math.PI * tc), 0.24);
+  const lump = 1 + 0.025 * fbm(t * 5, ny * 1.4, nz * 1.4, 1600) - 0.03 * wellLattice(t, w);
+  const skirt = ny < -0.2 ? 1 + 0.06 * smooth(-0.2, -0.8, ny) : 1;
+  return o.set((t - 0.5) * WELL_L, (sy > 0 ? sy * WELL_TOP : sy * WELL_BOT) * prof * lump, sz * WELL_W * prof * lump * skirt);
+}
+
+const wellingtonGeo = once(() => {
+  const g = surface(64, 40, (u, v, o) => wellPoint(u, v, o));
+  sit(g);
+  return g;
+});
+
+// ---- Stuffed mushroom --------------------------------------------------------------------------
+
+const SM_R = 0.046;
+const SM_DEPTH = 0.026;
+const SM_FILL_Y = SM_DEPTH - 0.004;
+
+function stuffingHeight(x: number, z: number): number {
+  const d = Math.hypot(x, z) / (SM_R * 0.92);
+  if (d >= 1) return SM_FILL_Y;
+  return SM_FILL_Y + 0.02 * Math.pow(1 - d * d, 0.8) * (1 + 0.12 * fbm(x * 60, z * 60, 0, 1700));
+}
+
+const stuffedParts = once(() => {
+  const bowl = surface(32, 10, (u, v, o) => {
+    const th = TAU * u;
+    const g = v * (Math.PI / 2);
+    const wob = 1 + 0.03 * noise3(Math.cos(th) * 3, Math.sin(th) * 3, 0, 1000);
+    const rad = SM_R * Math.cos(g) * wob;
+    o.set(rad * Math.cos(th), SM_DEPTH - SM_DEPTH * Math.pow(Math.sin(g), 0.85), -rad * Math.sin(th));
+  }, (u, v) => [u, 1 - v * 0.65]);
+  const lip = new THREE.TorusGeometry(SM_R * 0.985, 0.0028, 6, 40);
+  lip.rotateX(Math.PI / 2);
+  lip.translate(0, SM_DEPTH, 0);
+  for (let i = 0; i < lip.attributes.position.count; i++) {
+    const p = lip.attributes.position;
+    const a = Math.atan2(p.getZ(i), p.getX(i));
+    const k = 1 + 0.03 * noise3(Math.cos(-a) * 3, Math.sin(-a) * 3, 0, 1000);
+    p.setX(i, p.getX(i) * k);
+    p.setZ(i, p.getZ(i) * k);
+  }
+  lip.computeVertexNormals();
+  const fill = surface(28, 8, (u, v, o) => {
+    const th = TAU * u;
+    const rr = SM_R * 0.93 * (1 - v);
+    const x = rr * Math.cos(th);
+    const z = -rr * Math.sin(th);
+    o.set(x, stuffingHeight(x, z), z);
+  }, (u, v) => [u, v]);
+  const cheese = gratedHeap(70, SM_R * 0.72, 0.005, 1710, stuffingHeight, 0.6);
+  return { bowl, lip, fill, cheese };
+});
+
+// ---- Tomato slices -----------------------------------------------------------------------------
+
+const TOM_SLICE_R = 0.027;
+const TOM_SLICE_H = 0.005;
+
+const tomatoSliceParts = once(() => {
+  const face = new THREE.CircleGeometry(TOM_SLICE_R, 28);
+  face.rotateX(-Math.PI / 2);
+  face.translate(0, TOM_SLICE_H, 0);
+  const rim = new THREE.CylinderGeometry(TOM_SLICE_R, TOM_SLICE_R * 0.97, TOM_SLICE_H, 28, 1, true);
+  rim.translate(0, TOM_SLICE_H / 2, 0);
+  return { face, rim };
+});
+
+// ---- Roast potato wedges -----------------------------------------------------------------------
+
+const WEDGE_R = 0.03;
+const WEDGE_A = 1.25;
+const WEDGE_L = 0.066;
+
+const wedgeGeo = once(() => {
+  const shp = new THREE.Shape();
+  const steps = 6;
+  shp.moveTo(0, 0);
+  for (let i = 1; i <= steps; i++) shp.lineTo(Math.cos(-WEDGE_A / 2) * WEDGE_R * (i / steps), Math.sin(-WEDGE_A / 2) * WEDGE_R * (i / steps));
+  for (let i = 1; i <= 10; i++) {
+    const a = -WEDGE_A / 2 + (WEDGE_A * i) / 10;
+    shp.lineTo(Math.cos(a) * WEDGE_R, Math.sin(a) * WEDGE_R);
+  }
+  for (let i = steps - 1; i >= 1; i--) shp.lineTo(Math.cos(WEDGE_A / 2) * WEDGE_R * (i / steps), Math.sin(WEDGE_A / 2) * WEDGE_R * (i / steps));
+  shp.closePath();
+  const g = new THREE.ExtrudeGeometry(shp, { depth: WEDGE_L, steps: 14, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 2, curveSegments: 4 });
+  const p = g.attributes.position;
+  const col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const x0 = p.getX(i);
+    const y0 = p.getY(i);
+    const z0 = p.getZ(i);
+    const t = clamp01(z0 / WEDGE_L);
+    const taper = 0.55 + 0.45 * Math.pow(Math.sin(Math.PI * (0.03 + 0.94 * t)), 0.5);
+    const r = Math.hypot(x0, y0);
+    const a = Math.atan2(y0, x0);
+    // Colour: skin on the arc, creamy flesh on the cuts, deeper golden crisp along the edges and tips.
+    const skin = smooth(0.82, 0.97, r / WEDGE_R) * smooth(WEDGE_A / 2 + 0.02, WEDGE_A / 2 - 0.1, Math.abs(a));
+    const edge = Math.max(
+      smooth(0.75, 0.98, r / WEDGE_R) * smooth(WEDGE_A / 2 - 0.25, WEDGE_A / 2, Math.abs(a)),
+      1 - smooth(0.0, 0.25, r / WEDGE_R),
+      1 - smooth(0.0, 0.18, Math.min(t, 1 - t)),
+    );
+    const n = 0.06 * fbm(x0 * 300, y0 * 300, z0 * 120, 1800);
+    let cr = 1 + n;
+    let cg = 0.86 + n;
+    let cb = 0.5 + n;
+    cr = mix(cr, 0.84, edge);
+    cg = mix(cg, 0.6, edge);
+    cb = mix(cb, 0.3, edge);
+    cr = mix(cr, 0.56, skin);
+    cg = mix(cg, 0.37, skin);
+    cb = mix(cb, 0.19, skin);
+    col.set([cr, cg, cb], i * 3);
+    const lumpy = 1 + 0.06 * fbm(x0 * 120, y0 * 120, z0 * 60, 1801);
+    p.setXYZ(i, x0 * taper * lumpy, y0 * taper * lumpy, z0 + (1 - taper) * 0.0);
+  }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  g.center();
+  return g;
+});
+
+const roastParts = once(() => {
+  const w = wedgeGeo();
+  // Wedge lies along z; rotate so a flat cut face is down-ish for each piece.
+  const r = rng(1810);
+  const pieces: Piece[] = [];
+  const spots: [number, number, number, number][] = [
+    [-0.03, 0.0, -0.02, 0.4],
+    [0.028, 0.0, -0.016, -0.5],
+    [-0.012, 0.0, 0.028, 1.6],
+    [0.03, 0.0, 0.03, 2.4],
+    [0.0, 0.02, 0.004, -0.1],
+  ];
+  for (const [x, y, z, ry] of spots) pieces.push({ geo: w, x, y, z, rx: (r() - 0.5) * 0.2, ry, rz: WEDGE_A / 2 + (r() - 0.5) * 0.3 });
+  const potatoes = assemble(pieces);
+  // Rosemary: two sprigs of needles on a twig.
+  const needle = new THREE.BoxGeometry(0.0014, 0.0007, 0.011);
+  needle.translate(0, 0, 0.0055);
+  const twig = new THREE.CylinderGeometry(0.0007, 0.0009, 0.036, 5, 1);
+  twig.rotateZ(Math.PI / 2);
+  const sprig: Piece[] = [{ geo: twig, x: 0, y: 0, z: 0 }];
+  for (let i = 0; i < 14; i++) {
+    const x = -0.016 + (i / 13) * 0.032;
+    sprig.push({ geo: needle, x, y: 0.0005, z: 0, ry: (i % 2 ? 1 : -1) * (0.9 + r() * 0.3), rx: -0.25 });
+  }
+  const sp = assemble(sprig, false);
+  potatoes.computeBoundingBox();
+  const top = potatoes.boundingBox!.max.y;
+  const herbs = assemble(
+    [
+      { geo: sp, x: 0.004, y: top - 0.004, z: -0.002, ry: 0.5, rz: 0.08 },
+      { geo: sp, x: -0.02, y: top - 0.012, z: 0.016, ry: -0.9, rz: -0.06 },
+    ],
+    false,
+  );
+  return { potatoes, herbs };
+});
+
+// ---- Textures for the bakery set ---------------------------------------------------------------
+
+/** Tileable round holes for Swiss-style cheese. Returns hole weight and inner shading. */
+function cheeseHoles(u: number, v: number): { hole: number; shade: number } {
+  const N = 4;
+  const cx = Math.floor(u * N);
+  const cy = Math.floor(v * N);
+  let hole = 0;
+  let shade = 0;
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      const ix = (((cx + dx) % N) + N) % N;
+      const iy = (((cy + dy) % N) + N) % N;
+      if (hash3(ix, iy, 0, 1900) > 0.6) continue;
+      const px = (cx + dx + 0.2 + 0.6 * hash3(ix, iy, 1, 1900)) / N;
+      const py = (cy + dy + 0.2 + 0.6 * hash3(ix, iy, 2, 1900)) / N;
+      const rad = (0.12 + 0.2 * hash3(ix, iy, 3, 1900)) / N;
+      const ddx = u - px;
+      const ddy = v - py;
+      const d = Math.hypot(ddx, ddy);
+      const h = 1 - smooth(rad * 0.82, rad, d);
+      if (h > hole) {
+        hole = h;
+        shade = clamp01(0.5 + 0.5 * (ddy / rad));
+      }
+    }
+  return { hole, shade };
+}
+
+const BT = {
+  boule: once(() =>
+    pixelTexture(160, 96, (u, v) => {
+      const d = sphDir(u, v, D);
+      const s = bouleScore(d);
+      const side = smooth(0.7, -0.1, d.y);
+      const n = fbm(d.x * 9, d.y * 9, d.z * 9, 1950);
+      let r = mix(0.52, 0.74, side) + 0.06 * n;
+      let g = mix(0.28, 0.45, side) + 0.05 * n;
+      let b = mix(0.12, 0.22, side) + 0.04 * n;
+      // Pale floury base.
+      const under = smooth(-0.1, -0.5, d.y);
+      r = mix(r, 0.88, under * 0.7);
+      g = mix(g, 0.76, under * 0.7);
+      b = mix(b, 0.58, under * 0.7);
+      // Banneton flour rings spiralling out from the crown.
+      const ph = Math.acos(Math.max(-1, Math.min(1, d.y)));
+      const rr = (ph / (Math.PI / 2)) * 6.5 + 0.18 * fbm(d.x * 4, d.y * 4, d.z * 4, 1951);
+      const f = frac(rr);
+      const ring = smooth(0.3, 0.55, f) * (1 - smooth(0.6, 0.85, f));
+      const patch = smooth(-0.25, 0.35, fbm(d.x * 6, d.y * 6, d.z * 6, 1952));
+      const flour = clamp01(ring * patch * smooth(-0.15, 0.2, d.y) * 0.42 + patch * 0.18 * smooth(0.0, 0.6, d.y) + (noise3(d.x * 70, d.y * 70, d.z * 70, 1953) > 0.62 ? 0.2 : 0));
+      // Blisters.
+      const blister = noise3(d.x * 55, d.y * 55, d.z * 55, 1954) > 0.68 ? 1 : 0;
+      r -= 0.1 * blister;
+      g -= 0.08 * blister;
+      b -= 0.05 * blister;
+      r = mix(r, 0.96, flour);
+      g = mix(g, 0.93, flour);
+      b = mix(b, 0.86, flour);
+      // Scores: dark caramelised ears, golden torn crumb inside.
+      r = mix(r, 0.42, s.lip);
+      g = mix(g, 0.2, s.lip);
+      b = mix(b, 0.08, s.lip);
+      r = mix(r, 0.94, s.groove);
+      g = mix(g, 0.74, s.groove);
+      b = mix(b, 0.44, s.groove);
+      return [r, g, b];
+    }),
+  ),
+  crumb: once(() =>
+    pixelTexture(96, 96, (u, v) => {
+      const sx = u * 0.13 - 0.065;
+      const sy = v * 0.12 - 0.06;
+      const e = sliceE(sx, sy);
+      const edge = (1 - e) * 0.05; // ~ metres from the crust
+      const crust = 1 - smooth(0.0022, 0.0042, edge);
+      const ring = (1 - smooth(0.004, 0.009, edge)) * (1 - crust);
+      // Open crumb: many small, slightly tall holes (cellular), shadowed on top and lit below.
+      const C = 0.0055;
+      const gx = sx / C;
+      const gy = sy / (C * 1.25);
+      const cx = Math.floor(gx);
+      const cy = Math.floor(gy);
+      let hole = 0;
+      let hs = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const ix = cx + dx;
+          const iy = cy + dy;
+          if (hash3(ix, iy, 0, 1960) > 0.75) continue;
+          const big = hash3(ix, iy, 4, 1960) > 0.9 ? 1.9 : 1;
+          const px = ix + 0.2 + 0.6 * hash3(ix, iy, 1, 1960);
+          const py = iy + 0.2 + 0.6 * hash3(ix, iy, 2, 1960);
+          const rad = (0.16 + 0.22 * hash3(ix, iy, 3, 1960)) * big;
+          const ex = gx - px + 0.12 * noise3(gx * 3, gy * 3, 0, 1963);
+          const ey = (gy - py) * 1.15;
+          const d = Math.hypot(ex, ey);
+          const h = 1 - smooth(rad * 0.8, rad, d);
+          if (h > hole) {
+            hole = h;
+            hs = clamp01(0.5 - 0.5 * (ey / rad));
+          }
+        }
+      hole *= smooth(0.003, 0.008, edge);
+      const base = 0.95 + 0.035 * fbm(sx * 140, sy * 140, 2, 1962);
+      let r = base;
+      let g = base * 0.91;
+      let b = base * 0.77;
+      // Shadowed upper wall, lit lower wall.
+      const ir = mix(0.8, 0.5, hs);
+      const ig = mix(0.68, 0.38, hs);
+      const ib = mix(0.5, 0.25, hs);
+      r = mix(r, ir, hole);
+      g = mix(g, ig, hole);
+      b = mix(b, ib, hole);
+      r = mix(r, 0.82, ring * 0.6);
+      g = mix(g, 0.66, ring * 0.6);
+      b = mix(b, 0.42, ring * 0.6);
+      r = mix(r, 0.48, crust);
+      g = mix(g, 0.26, crust);
+      b = mix(b, 0.11, crust);
+      if (e > 1.02) return [0.45, 0.24, 0.1];
+      return [r, g, b];
+    }),
+  ),
+  crust: once(() =>
+    pixelTexture(128, 16, (u, v) => {
+      const n = pfbm(u, v, 60, 2, 1970);
+      const flour = noise3(u * 400, v * 20, 0, 1971) > 0.74 ? 0.7 : 0;
+      const l = 0.95 + 0.08 * n;
+      return [mix(0.56 * l, 0.92, flour * 0.6), mix(0.31 * l, 0.86, flour * 0.6), mix(0.13 * l, 0.75, flour * 0.6)];
+    }),
+  ),
+  paste: once(() =>
+    pixelTexture(64, 64, (u, v) => {
+      const { hole, shade } = cheeseHoles(u, v);
+      const n = 0.04 * fbm(u * 20, v * 20, 0, 1980);
+      let r = 1 + n;
+      let g = 0.84 + n;
+      let b = 0.38 + n;
+      const ir = mix(0.78, 0.98, shade);
+      const ig = mix(0.55, 0.78, shade);
+      const ib = mix(0.12, 0.3, shade);
+      r = mix(r, ir, hole);
+      g = mix(g, ig, hole);
+      b = mix(b, ib, hole);
+      return [r, g, b];
+    }),
+  ),
+  rind: once(() =>
+    pixelTexture(64, 32, (u, v) => {
+      const n = fbm(u * 14, v * 7, 0, 1990);
+      const l = 0.92 + 0.08 * n;
+      return [0.9 * l, 0.62 * l, 0.2 * l];
+    }),
+  ),
+  pastry: once(() =>
+    pixelTexture(96, 72, (u, v) => {
+      const n = fbm(u * 18, v * 14, 0, 2000);
+      let l = 0.97 + 0.04 * n;
+      const crease = Math.exp(-(((u - 1 / 3) / 0.008) ** 2)) + Math.exp(-(((u - 2 / 3) / 0.008) ** 2));
+      l -= 0.08 * crease;
+      const dimple = smooth(0.3, 0.6, noise3(u * 70, v * 52, 1, 2001)) * 0.09;
+      l -= dimple;
+      // Fork docking holes in a loose grid.
+      const gx = frac(u * 14) - 0.5;
+      const gy = frac(v * 10.5) - 0.5;
+      const dock = 1 - smooth(0.06, 0.11, Math.hypot(gx * 1.0, gy * 1.33));
+      l -= 0.22 * dock;
+      const dust = smooth(0.1, 0.5, fbm(u * 6, v * 5, 2, 2002)) * (noise3(u * 300, v * 220, 3, 2003) > 0.35 ? 1 : 0.3);
+      const r = mix(l, 1, dust * 0.4);
+      const g = mix(l * 0.86, 0.99, dust * 0.35);
+      const b = mix(l * 0.6, 0.95, dust * 0.35);
+      return [r, g, b];
+    }),
+  ),
+  wellington: once(() =>
+    pixelTexture(160, 128, (t, w) => {
+      const lat = wellLattice(t, w);
+      const top = smooth(-0.6, 0.6, -Math.cos(TAU * w));
+      const n = fbm(t * 30, w * 28, 0, 2010);
+      const pool = smooth(0.05, 0.5, fbm(t * 10, w * 9, 1, 2011));
+      // Egg-washed pastry: richer yellow on top, paler underneath; scores show pale layers.
+      let r = mix(0.97, 1.0, top) + 0.03 * n;
+      let g = mix(0.88, 0.82, top) + 0.03 * n - 0.05 * pool * top;
+      let b = mix(0.68, 0.5, top) + 0.03 * n - 0.1 * pool * top;
+      r = mix(r, 1.0, lat * 0.9);
+      g = mix(g, 0.96, lat * 0.9);
+      b = mix(b, 0.86, lat * 0.9);
+      const salt = noise3(t * 420, w * 380, 2, 2012) > 0.72 ? top : 0;
+      r = mix(r, 1, salt);
+      g = mix(g, 1, salt);
+      b = mix(b, 1, salt);
+      return [r, g, b];
+    }),
+  ),
+  tomatoSlice: once(() =>
+    pixelTexture(64, 64, (u, v) => {
+      const x = (u - 0.5) * 2;
+      const y = (v - 0.5) * 2;
+      const rr = Math.hypot(x, y);
+      const a = Math.atan2(y, x);
+      const skin = smooth(0.9, 0.97, rr);
+      const wall = 1 - smooth(0.78, 0.86, rr);
+      // Four seed chambers separated by radial septa around a pale core.
+      const sec = frac((a / TAU) * 4 + 0.08);
+      const septum = 1 - smooth(0.05, 0.12, Math.min(sec, 1 - sec));
+      const core = 1 - smooth(0.14, 0.24, rr);
+      const chamber = wall * (1 - septum) * (1 - core) * smooth(0.2, 0.3, rr);
+      const seedP = Math.hypot((sec - 0.5) * 1.6, rr - 0.52);
+      const seeds = chamber * (noise3(u * 70, v * 70, 0, 2020) > 0.35 ? 1 : 0) * (1 - smooth(0.12, 0.22, seedP));
+      let r = 0.95;
+      let g = 0.3;
+      let b = 0.24;
+      // Gel: glossy, lighter orange-red.
+      r = mix(r, 1.0, chamber * 0.7);
+      g = mix(g, 0.52, chamber * 0.7);
+      b = mix(b, 0.3, chamber * 0.7);
+      r = mix(r, 1.0, core * 0.6);
+      g = mix(g, 0.62, core * 0.6);
+      b = mix(b, 0.5, core * 0.6);
+      r = mix(r, 1.0, seeds);
+      g = mix(g, 0.9, seeds);
+      b = mix(b, 0.55, seeds);
+      r = mix(r, 0.8, skin);
+      g = mix(g, 0.12, skin);
+      b = mix(b, 0.08, skin);
+      const pepper = noise3(u * 160, v * 160, 4, 2021) > 0.78 ? 1 : 0;
+      return [r * (1 - 0.7 * pepper), g * (1 - 0.7 * pepper), b * (1 - 0.7 * pepper)];
+    }),
+  ),
+  tray: once(() =>
+    pixelTexture(192, 140, (u, v) => {
+      const brushed = 0.04 * noise3(u * 4, v * 900, 0, 2030) + 0.02 * fbm(u * 20, v * 20, 1, 2031);
+      let l = 0.9 + brushed;
+      // Baking stains: brown rings and patina, heavier towards the corners and edges.
+      const edge = 1 - smooth(0.0, 0.12, Math.min(u, 1 - u, v, 1 - v));
+      const blot = fbm(u * 5, v * 4, 2, 2032);
+      const ringv = Math.abs(fbm(u * 7, v * 5, 3, 2033));
+      const stain = clamp01(smooth(0.3, 0.55, blot) * 0.45 + edge * 0.35 + (1 - smooth(0.0, 0.025, ringv)) * 0.3 * smooth(0.1, 0.35, blot));
+      const scratch = Math.abs(noise3(u * 30, v * 30, 5, 2034)) < 0.01 ? 0.08 : 0;
+      l -= scratch;
+      const r = mix(l, 0.78, stain * 0.6);
+      const g = mix(l, 0.58, stain * 0.6);
+      const b = mix(l * 1.02, 0.32, stain * 0.6);
+      return [r, g, b];
+    }),
+  ),
+};
+
+// ---- Exported bakery builders ------------------------------------------------------------------
+
+/** Doneness target colours used by the Episode 2 models (also stamped as userData.cooked). */
+export const BAKE_COOKED = {
+  crumb: 0xdc9f5c,
+  crust: 0xb89070,
+  pastry: 0xd99a4a,
+  wellington: 0xc88c50,
+  cheese: 0xd88e2c,
+  tomato: 0xf09070,
+  mushroom: 0x7a5636,
+  stuffing: 0x5a4028,
+  potato: 0xdca246,
+} as const;
+
+function sourdoughSlice(): THREE.Group {
+  const p = sliceParts();
+  return group(
+    browns(bumpy(tinted(p.crumb, 0xffffff, { map: BT.crumb(), roughness: 0.9 }), 1.2), BAKE_COOKED.crumb),
+    browns(bumpy(tinted(p.crust, 0xffffff, { map: BT.crust(), roughness: 0.8 }), 1), BAKE_COOKED.crust),
+  );
+}
+
+/** Height of the top face of a sourdough slice (for stacking toppings). */
+export function sourdoughSliceTop(): number {
+  return sliceParts().top;
+}
+
+/** Half sheet pan: 0.45 x 0.32 m, ~2.1 cm rolled rim. Origin at the centre of the base, base at y = 0. */
+export function buildTray(): THREE.Group {
+  const p = trayParts();
+  const alu = () => mat(0xd6dade, { map: BT.tray(), roughness: 0.38, metalness: 0.85, side: THREE.DoubleSide });
+  const base = new THREE.Mesh(p.base, alu());
+  const wall = new THREE.Mesh(p.wall, alu());
+  const bead = new THREE.Mesh(p.bead, mat(0xe4e8ec, { roughness: 0.3, metalness: 0.9 }));
+  for (const m of [base, wall, bead]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
+  return group(base, wall, bead);
+}
+
+/** Pastry-wrapped beef Wellington (~0.22 x 0.08 x 0.09 m), lattice-scored and egg-washed. */
+export function buildWrappedWellington(): THREE.Group {
+  const m = browns(bumpy(tinted(wellingtonGeo(), 0xffffff, { map: BT.wellington(), roughness: 0.42 }), 1.4), BAKE_COOKED.wellington);
+  return group(m);
+}
+
+/** A flipped mushroom cap heaped with duxelles and grated cheese (~0.095 m across, ~0.05 m tall). */
+export function buildStuffedMushroom(): THREE.Group {
+  const p = stuffedParts();
+  return group(
+    browns(tinted(p.bowl, 0xa98560, { map: T.mushroomCap(), roughness: 0.7, side: THREE.DoubleSide }), BAKE_COOKED.mushroom),
+    browns(tinted(p.lip, 0xc4a17e, { roughness: 0.75 }), BAKE_COOKED.mushroom),
+    browns(tinted(p.fill, 0x8e6c4e, { map: T.mince(), roughness: 0.8 }), BAKE_COOKED.stuffing),
+    browns(tinted(p.cheese, 0xf8d460, { roughness: 0.5, side: THREE.DoubleSide, vertexColors: true }), BAKE_COOKED.cheese),
+  );
+}
+
+/** Open-faced tomato toast: a sourdough slice with three overlapping tomato slices. */
+export function buildTomatoToast(): THREE.Group {
+  const g = sourdoughSlice();
+  const sl = tomatoSliceParts();
+  const top = sourdoughSliceTop();
+  const spots: [number, number, number][] = [
+    [-0.03, 0.006, 0.4],
+    [0.002, -0.006, 1.7],
+    [0.032, 0.008, 3.1],
+  ];
+  const faces = assemble(spots.map(([x, z, ry], i) => ({ geo: sl.face, x, y: top + (i === 1 ? 0.0016 : 0), z, ry })), false);
+  const rims = assemble(spots.map(([x, z, ry], i) => ({ geo: sl.rim, x, y: top + (i === 1 ? 0.0016 : 0), z, ry })), false);
+  g.add(
+    browns(tinted(faces, 0xffffff, { map: BT.tomatoSlice(), roughness: 0.42 }), BAKE_COOKED.tomato),
+    browns(tinted(rims, 0xcc2a18, { roughness: 0.3 }), BAKE_COOKED.tomato),
+  );
+  return g;
+}
+
+/** A small heap of roast potato wedges with rosemary (~0.11 x 0.045 x 0.1 m). */
+export function buildRoastPotatoes(): THREE.Group {
+  const p = roastParts();
+  return group(
+    browns(tinted(p.potatoes, 0xffffff, { map: T.fries(), roughness: 0.55, vertexColors: true }), BAKE_COOKED.potato),
+    fixed(p.herbs, 0x3e5a2a, { roughness: 0.7 }),
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Definitions
 // ---------------------------------------------------------------------------------------------
 
@@ -1392,6 +2322,36 @@ export const INGREDIENTS: Record<IngredientKind, IngredientDef> = {
     cooked: 0x2f7f22,
     whole: () => group(tinted(beansGeo(), 0x48a832, { map: T.bean(), roughness: 0.45, vertexColors: true })),
     chopped: () => group(tinted(snippedGeo(), 0x48a832, { map: T.bean(), roughness: 0.45, vertexColors: true })),
+  },
+  sourdough: {
+    name: 'Sourdough',
+    choppedName: 'Sourdough Slice',
+    raw: 0xc98a4a,
+    cooked: BAKE_COOKED.crumb,
+    whole: () => group(browns(bumpy(tinted(bouleGeo(), 0xffffff, { map: BT.boule(), roughness: 0.85 }), 1.5), BAKE_COOKED.crust)),
+    chopped: () => sourdoughSlice(),
+  },
+  cheese: {
+    name: 'Cheese',
+    choppedName: 'Grated Cheese',
+    raw: 0xf2c84b,
+    cooked: BAKE_COOKED.cheese,
+    whole: () => {
+      const p = cheeseParts();
+      return group(
+        browns(bumpy(tinted(p.paste, 0xffffff, { map: BT.paste(), roughness: 0.55 }), 2), BAKE_COOKED.cheese),
+        browns(tinted(p.rind, 0xffffff, { map: BT.rind(), roughness: 0.45 }), BAKE_COOKED.crust),
+      );
+    },
+    chopped: () => group(browns(tinted(gratedGeo(), 0xf4c64c, { roughness: 0.5, side: THREE.DoubleSide, vertexColors: true }), BAKE_COOKED.cheese)),
+  },
+  pastry: {
+    name: 'Puff Pastry',
+    choppedName: 'Puff Pastry',
+    raw: 0xf3e2bc,
+    cooked: BAKE_COOKED.pastry,
+    whole: () => group(browns(bumpy(tinted(pastryGeo(), 0xffffff, { map: BT.pastry(), roughness: 0.62 }), 1.2), BAKE_COOKED.pastry)),
+    chopped: () => group(browns(bumpy(tinted(pastryGeo(), 0xffffff, { map: BT.pastry(), roughness: 0.62 }), 1.2), BAKE_COOKED.pastry)),
   },
 };
 

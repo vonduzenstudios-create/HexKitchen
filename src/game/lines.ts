@@ -2,6 +2,30 @@
 // CAPS words are emphasised by the voice synth.
 
 export type LineKey =
+  | 'underbaked'
+  | 'resortIntro'
+  | 'resort1'
+  | 'resort2'
+  | 'resort3'
+  | 'resortTaste'
+  | 'resortWin'
+  | 'resortLose'
+  | 'serviceInspection'
+  | 'inspectionBump'
+  | 'inspectionReady'
+  | 'inspectionDone'
+  | 'ovenEmpty'
+  | 'deskBell'
+  | 'deskBellAnnoyed'
+  | 'deskBellFurious'
+  | 'traySpill'
+  | 'ovenBurning'
+  | 'toastCatch'
+  | 'toastLanding'
+  | 'trolleyCrash'
+  | 'pastryResting'
+  | 'printerTicket'
+  | 'openOvenInspection'
   | 'intro'
   | 'whatWasThat'
   | 'burnedHand'
@@ -60,6 +84,89 @@ export type LineKey =
   | 'emptyPlate';
 
 export const LINES: Record<LineKey, string[]> = {
+  underbaked: [
+    "That's pale and RAW in the middle! It needed more time in the oven!",
+    "Underbaked! Did you even turn the oven ON?",
+  ],
+  resortIntro: [
+    "Congratulations. You've been PROMOTED. Welcome to the Last Resort, where the guests never leave. Literally.",
+  ],
+  resort1: [
+    "Round one, the Continental Dreadfast. Tomato toast. Chop it, top it, bake it. Even a breakfast buffet could do it.",
+  ],
+  resort2: [
+    "Room service! Stuffed mushrooms, AND a steak with roast potatoes. Try serving it before the room becomes a tomb.",
+  ],
+  resort3: [
+    "The Honeymoon Suite. A REAL Wellington this time. Wrapped in pastry. Your basement audition is over. Show me the complete thing.",
+  ],
+  resortTaste: [
+    "The Honeymoon Wellington. Let's cut it open and see if you've earned the suite.",
+  ],
+  resortWin: [
+    "Golden pastry. Pink in the middle. You actually did it. Fine. You can have the suite. Don't touch the minibar.",
+  ],
+  resortLose: [
+    "Soggy bottom, grey beef. This Wellington is a CRIME scene. Check out time is NOW. Look at me!",
+  ],
+  serviceInspection: [
+    "Service inspection! I'm checking that oven. Stay out of my way!",
+    "Inspection! Nobody touches the oven while I'm looking at it!",
+    "Right, service inspection. Let's see what you've got cooking.",
+  ],
+  inspectionBump: [
+    "MIND YOUR BACK! I'm inspecting here!",
+    "Don't shove past me, you donkey! Go around!",
+  ],
+  inspectionReady: [
+    "That's READY! Get it out before it burns! Go on, I'll move!",
+    "Are you deaf? The timer went! Take it out!",
+  ],
+  inspectionDone: [
+    "Hmm. Carry on. For now.",
+    "Inspection over. Don't make me come back.",
+  ],
+  ovenEmpty: [
+    "An empty oven! Brilliant. Are you baking AIR?",
+  ],
+  deskBell: [
+    "Who rang that? WHO RANG THAT BELL?",
+    "Yes? You RANG? This had better be good.",
+  ],
+  deskBellAnnoyed: [
+    "Ring that bell one more time and I'll ring YOUR neck.",
+    "Stop ringing the bell! I'm not your BUTLER!",
+  ],
+  deskBellFurious: [
+    "THAT'S IT! The next ding is going to be your HEAD hitting the floor!",
+  ],
+  traySpill: [
+    "You dropped the WHOLE TRAY? Everything? At once? Spectacular!",
+    "Look at the floor! That was a whole tray of food!",
+  ],
+  ovenBurning: [
+    "Something's burning in that oven! Can't you SMELL it?",
+    "The oven's smoking! Get it OUT!",
+  ],
+  toastCatch: [
+    "Ha! Nice catch. Don't let it go to your head.",
+  ],
+  toastLanding: [
+    "Straight onto the plate! Okay, THAT was impressive.",
+  ],
+  trolleyCrash: [
+    "Lock the wheels on that trolley, you muppet! It's not a go-kart!",
+  ],
+  pastryResting: [
+    "That pastry needs RESTING. You do not.",
+    "Wrap it tight! A loose Wellington is a sad Wellington.",
+  ],
+  printerTicket: [
+    "Another ticket. The guests are getting restless. Well, as restless as statues get.",
+  ],
+  openOvenInspection: [
+    "Don't open the oven while I'm inspecting it! You're letting the heat out!",
+  ],
   platingStart: [
     "Right. PLATE it. Make it look like food, not a crime scene.",
     "Presentation! People eat with their eyes first, you donkey!",

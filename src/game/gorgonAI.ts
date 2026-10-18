@@ -16,6 +16,10 @@ export type GorgonState =
   | 'sabotage'
   | 'toInvestigate'
   | 'investigate'
+  | 'toServiceInspect'
+  | 'serviceInspect'
+  | 'toLure'
+  | 'lured'
   | 'scripted';
 
 export type WrathStage = 'Calm' | 'Irritated' | 'Furious' | 'Petrifying Rage';
@@ -468,6 +472,28 @@ export class GorgonAI {
         if (this.state === 'investigate' && this.stateT > 3) this.backToPatrol();
         break;
       }
+      case 'toServiceInspect':
+        lookAt = this.inspectLook;
+        break;
+      case 'serviceInspect':
+        pose = Math.floor(this.stateT / 2.5) % 2 === 0 ? 'armsCrossed' : 'point';
+        lookAt = this.inspectLook;
+        this.faceToward(this.inspectLook);
+        this.inspectionLeft -= dt;
+        if (this.inspectionLeft <= 0) {
+          this.inspectionLeft = 0;
+          this.say('inspectionDone', 1);
+          this.backToPatrol();
+        }
+        break;
+      case 'toLure':
+        lookAt = this.lureAt.clone().setY(1);
+        break;
+      case 'lured':
+        pose = this.stateT < 1.5 ? 'yell' : 'armsCrossed';
+        lookAt = eyeP;
+        if (this.stateT > 3.2) this.backToPatrol();
+        break;
       case 'scripted':
         pose = this.pose;
         lookAt = this.lookAt;
@@ -599,6 +625,51 @@ export class GorgonAI {
     }
   }
 
+  // ---------- Episode 2: Service Inspection and the desk bell ----------
+
+  /** Seconds left in the current Service Inspection (0 when not inspecting). */
+  inspectionLeft = 0;
+  private inspectSpot = new THREE.Vector3();
+  private inspectLook = new THREE.Vector3();
+  private lureAt = new THREE.Vector3();
+
+  /**
+   * Announce a Service Inspection and march to `spot` to stare at the oven (`look`) for `seconds`.
+   * Only starts from patrol so it never stacks on a gaze or a meltdown.
+   */
+  serviceInspect(spot: THREE.Vector3, look: THREE.Vector3, seconds: number): boolean {
+    if (this.state !== 'patrol' || this.tantrumT > 0 || this.watching) return false;
+    this.inspectSpot.copy(spot).setY(0);
+    this.inspectLook.copy(look);
+    this.inspectionLeft = seconds;
+    this.set('toServiceInspect');
+    this.say('serviceInspection', 2);
+    this.walkTo(this.inspectSpot, 1.15 * (this.temper?.speed ?? 1), () => this.set('serviceInspect'));
+    return true;
+  }
+
+  /** Mid-inspection: shuffle to another spot (e.g. out of the way of ready food). */
+  stepAside(spot: THREE.Vector3): void {
+    if (this.state !== 'serviceInspect' && this.state !== 'toServiceInspect') return;
+    this.inspectSpot.copy(spot).setY(0);
+    this.walkTo(this.inspectSpot, 1.3, () => this.set('serviceInspect'));
+  }
+
+  get inspecting(): boolean {
+    return this.state === 'serviceInspect' || this.state === 'toServiceInspect';
+  }
+
+  /** The desk bell: he storms over to see who rang. Works while patrolling or inspecting (it's a distraction). */
+  lure(at: THREE.Vector3): boolean {
+    if (!this.temper || !['patrol', 'serviceInspect', 'toServiceInspect', 'investigate', 'toInvestigate'].includes(this.state)) return false;
+    this.inspectionLeft = 0;
+    this.lureAt.copy(at).setY(0);
+    this.set('toLure');
+    this.faceToward(at);
+    this.walkTo(this.lureAt, 1.4 * wrathStage(this.world.wrath()).speed, () => this.set('lured'));
+    return true;
+  }
+
   /** Plating Mode: he hovers and judges instead of interrupting. Cancels a gaze that's winding up. */
   watch(): void {
     this.watching = true;
@@ -613,6 +684,7 @@ export class GorgonAI {
   private watching = false;
 
   private backToPatrol(): void {
+    this.inspectionLeft = 0;
     this.gazing = false;
     this.glow = 0;
     if (!this.temper) {

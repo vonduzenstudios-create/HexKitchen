@@ -6,9 +6,12 @@ import { INGREDIENTS, type IngredientKind } from './ingredients';
 import { freshCookState, type CookState } from './recipes';
 import type { StationId } from './kitchen';
 import { buildExtinguisher, buildPlate } from './plate';
+import { buildTray } from './bakeModels';
 
-export type ItemKind = IngredientKind | 'mirrorPan' | 'plate' | 'extinguisher';
-export type ItemWhere = 'world' | 'held' | 'station' | 'hook' | 'gone';
+export type ItemKind = IngredientKind | 'mirrorPan' | 'plate' | 'extinguisher' | 'tray' | 'trolley';
+/** 'carried': riding on a tray, trolley or assembly base (see Item.carrier). 'prop': parked in a set piece like the toaster. */
+export type ItemWhere = 'world' | 'held' | 'station' | 'hook' | 'carried' | 'prop' | 'gone';
+const TOOLS: ItemKind[] = ['mirrorPan', 'plate', 'extinguisher', 'tray', 'trolley'];
 
 const BURNT = new THREE.Color(0x1a1410);
 
@@ -57,13 +60,34 @@ export class Item {
   lastVy = 0;
   spawnTime = performance.now();
   private tints: THREE.Mesh[] = [];
+  /** What this item is riding on (tray, trolley, or the base of an assembly), and where on it. */
+  carrier: Item | null = null;
+  readonly carryOffset = new THREE.Vector3();
+  readonly carryQuat = new THREE.Quaternion();
+  /** Items riding on this one. */
+  readonly carried: Item[] = [];
+  /** Name override once an assembly has been put together ("Tomato Toast"). */
+  displayName: string | null = null;
+  /** Hidden inside an assembly whose combined model now represents it. */
+  hiddenInAssembly = false;
 
   constructor(
     readonly kind: ItemKind,
     private physics: Physics,
     pos: THREE.Vector3,
+    visual?: THREE.Object3D,
   ) {
-    this.visual = kind === 'mirrorPan' ? buildMirrorPan() : kind === 'plate' ? buildPlate() : kind === 'extinguisher' ? buildExtinguisher() : INGREDIENTS[kind].whole();
+    this.visual =
+      visual ??
+      (kind === 'mirrorPan'
+        ? buildMirrorPan()
+        : kind === 'plate'
+          ? buildPlate()
+          : kind === 'extinguisher'
+            ? buildExtinguisher()
+            : kind === 'tray'
+              ? buildTray()
+              : INGREDIENTS[kind as IngredientKind].whole());
     this.group.add(this.visual);
     this.group.position.copy(pos);
     this.tagMeshes();
@@ -77,13 +101,16 @@ export class Item {
   }
 
   get isIngredient(): boolean {
-    return this.kind !== 'mirrorPan' && this.kind !== 'plate' && this.kind !== 'extinguisher';
+    return !TOOLS.includes(this.kind);
   }
 
   get name(): string {
+    if (this.displayName) return this.displayName;
     if (this.kind === 'mirrorPan') return 'Polished Pan';
     if (this.kind === 'plate') return 'Clean Plate';
     if (this.kind === 'extinguisher') return 'Fire Extinguisher';
+    if (this.kind === 'tray') return this.carried.length ? `Tray (${this.carried.length})` : 'Sheet Tray';
+    if (this.kind === 'trolley') return 'Service Trolley';
     const d = INGREDIENTS[this.kind as IngredientKind];
     return this.cook.chopped ? d.choppedName : d.name;
   }
@@ -102,7 +129,7 @@ export class Item {
     const center = box.getCenter(new THREE.Vector3()).sub(this.group.position);
     const desc = RAPIER.ColliderDesc.cuboid(Math.max(0.02, size.x / 2), Math.max(0.012, size.y / 2), Math.max(0.02, size.z / 2))
       .setTranslation(center.x, center.y, center.z)
-      .setDensity(this.kind === 'mirrorPan' ? 2.5 : this.kind === 'plate' ? 2 : 0.8)
+      .setDensity(this.kind === 'mirrorPan' ? 2.5 : this.kind === 'plate' ? 2 : this.kind === 'trolley' ? 6 : this.kind === 'tray' ? 1.4 : 0.8)
       .setFriction(0.9)
       .setRestitution(0.15)
       .setCollisionGroups(groups(GROUP.ITEM, GROUP.STATIC | GROUP.ITEM | GROUP.STATUE | GROUP.PLAYER));
@@ -125,10 +152,62 @@ export class Item {
     this.refreshTint();
   }
 
+  /** Swap in the combined model of a finished assembly (e.g. pastry + beef + duxelles = Wellington). */
+  setVisual(visual: THREE.Object3D, name: string): void {
+    const rot = this.group.quaternion.clone();
+    this.group.quaternion.identity();
+    this.group.remove(this.visual);
+    this.visual = visual;
+    this.group.add(this.visual);
+    this.tagMeshes();
+    this.physics.world.removeCollider(this.collider, false);
+    this.collider = this.makeCollider();
+    this.group.quaternion.copy(rot);
+    this.displayName = name;
+    this.refreshTint();
+  }
+
   /** Doneness used for colouring: 0 raw, 1 cooked, 2 charcoal. */
   cookLevel(): number {
     const c = this.cook;
-    return Math.max((c.fry[0] + c.fry[1]) / 2, c.boil * 0.6, c.deepfry);
+    return Math.max((c.fry[0] + c.fry[1]) / 2, c.boil * 0.6, c.deepfry, c.bake);
+  }
+
+  /** The tray/trolley at the bottom of a carry chain (itself if it isn't carried). */
+  root(): Item {
+    let r: Item = this;
+    while (r.carrier) r = r.carrier;
+    return r;
+  }
+
+  /** This item plus everything riding on it, recursively. */
+  withCarried(): Item[] {
+    return [this, ...this.carried.flatMap((c) => c.withCarried())];
+  }
+
+  /** Attach `other` to ride on this item at a local offset. Its collider is switched off while it rides. */
+  attach(other: Item, offset: THREE.Vector3, quat = new THREE.Quaternion()): void {
+    other.carrier = this;
+    other.carryOffset.copy(offset);
+    other.carryQuat.copy(quat);
+    other.where = 'carried';
+    other.station = null;
+    other.setKinematic(true);
+    other.collider.setEnabled(false);
+    this.carried.push(other);
+  }
+
+  /** Stop riding on the carrier; the item becomes a free physics object again (unless the caller grabs it). */
+  detach(): void {
+    const c = this.carrier;
+    if (!c) return;
+    c.carried.splice(c.carried.indexOf(this), 1);
+    this.carrier = null;
+    this.where = 'world';
+    this.collider.setEnabled(true);
+    this.group.visible = true;
+    this.hiddenInAssembly = false;
+    this.setKinematic(false);
   }
 
   refreshTint(): void {
@@ -139,7 +218,9 @@ export class Item {
       const mm = m.material as THREE.MeshStandardMaterial;
       if (!m.userData.baseColor) m.userData.baseColor = mm.color.clone();
       const base = m.userData.baseColor as THREE.Color;
-      mm.color.copy(base).lerp(cooked, Math.min(1, lvl));
+      // Composite models (stuffed mushroom: cap + cheese) give each part its own browned colour.
+      const target = m.userData.cooked !== undefined ? new THREE.Color(m.userData.cooked) : cooked;
+      mm.color.copy(base).lerp(target, Math.min(1, lvl));
       if (lvl > 1) mm.color.lerp(BURNT, Math.min(1, lvl - 1));
     }
   }
@@ -171,14 +252,17 @@ export class Items {
     private physics: Physics,
   ) {}
 
-  spawn(kind: ItemKind, pos: THREE.Vector3): Item {
-    const it = new Item(kind, this.physics, pos);
+  spawn(kind: ItemKind, pos: THREE.Vector3, visual?: THREE.Object3D): Item {
+    const it = new Item(kind, this.physics, pos, visual);
     this.scene.add(it.group);
     this.list.push(it);
     return it;
   }
 
   remove(it: Item): void {
+    for (const c of it.carried.slice()) this.remove(c);
+    if (it.carrier) it.carrier.carried.splice(it.carrier.carried.indexOf(it), 1);
+    it.carrier = null;
     const i = this.list.indexOf(it);
     if (i >= 0) this.list.splice(i, 1);
     it.dispose(this.scene);
@@ -193,15 +277,53 @@ export class Items {
   }
 
   meshes(): THREE.Object3D[] {
-    return this.list.filter((i) => i.where !== 'held').map((i) => i.group);
+    return this.list.filter((i) => i.where !== 'held' && !i.hiddenInAssembly && !(i.carrier && i.root().where === 'held')).map((i) => i.group);
+  }
+
+  /** Fired when a tray or trolley tips or crashes and its load goes flying. */
+  onSpill: (carrier: Item, spilled: Item[]) => void = () => {};
+
+  /** Throw everything off a carrier, keeping its momentum. Assemblies stay assembled. */
+  spill(carrier: Item, boost = 1): Item[] {
+    const v = carrier.body.linvel();
+    const out = carrier.carried.slice();
+    for (const c of out) {
+      c.detach();
+      c.body.setLinvel({ x: v.x * 1.1 + (Math.random() - 0.5) * 1.6 * boost, y: Math.max(v.y, 0) + 1.2 + Math.random() * 1.4 * boost, z: v.z * 1.1 + (Math.random() - 0.5) * 1.6 * boost }, true);
+      c.body.setAngvel({ x: (Math.random() - 0.5) * 12, y: (Math.random() - 0.5) * 12, z: (Math.random() - 0.5) * 12 }, true);
+    }
+    if (out.length) this.onSpill(carrier, out);
+    return out;
+  }
+
+  /** Move riders to follow their carriers (roots first so chains stay glued). */
+  private updateCarried(it: Item): void {
+    for (const c of it.carried) {
+      const q = it.group.quaternion.clone().multiply(c.carryQuat);
+      const p = c.carryOffset.clone().applyQuaternion(it.group.quaternion).add(it.group.position);
+      c.group.position.copy(p);
+      c.group.quaternion.copy(q);
+      c.group.visible = !c.hiddenInAssembly;
+      c.drive(p, q);
+      this.updateCarried(c);
+    }
   }
 
   update(): void {
     for (const it of this.list.slice()) {
+      if (it.carrier) continue;
       const t = it.body.translation();
       const r = it.body.rotation();
       it.group.position.set(t.x, t.y, t.z);
       it.group.quaternion.set(r.x, r.y, r.z, r.w);
+      if (it.carried.length) {
+        this.updateCarried(it);
+        // A tray or trolley tipped past ~55 degrees dumps its load.
+        if (it.where === 'world' && (it.kind === 'tray' || it.kind === 'trolley')) {
+          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(it.group.quaternion);
+          if (up.y < 0.57) this.spill(it);
+        }
+      }
       if (it.where !== 'world') {
         it.lastVy = 0;
         continue;

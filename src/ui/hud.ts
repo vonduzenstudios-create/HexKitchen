@@ -53,10 +53,11 @@ const STEP_PREFIX: Record<Step, string> = {
   fry: 'Pan-fry the',
   boil: 'Boil the',
   deepfry: 'Deep-fry the',
+  bake: 'Bake the',
 };
-const STEP_SHORT: Record<Step, string> = { chop: 'Chop', season: 'Season', fry: 'Fry', boil: 'Boil', deepfry: 'Deep-fry' };
-const STEP_ICON: Record<Step, IconName> = { chop: 'knife', season: 'salt', fry: 'pan', boil: 'pot', deepfry: 'fryer' };
-const SHORT_NAME: Partial<Record<IngredientKind, string>> = { pasta: 'Spaghetti', beef: 'Beef', greens: 'Beans' };
+const STEP_SHORT: Record<Step, string> = { chop: 'Chop', season: 'Season', fry: 'Fry', boil: 'Boil', deepfry: 'Deep-fry', bake: 'Bake' };
+const STEP_ICON: Record<Step, IconName> = { chop: 'knife', season: 'salt', fry: 'pan', boil: 'pot', deepfry: 'fryer', bake: 'tray' };
+const SHORT_NAME: Partial<Record<IngredientKind, string>> = { pasta: 'Spaghetti', beef: 'Beef', greens: 'Beans', pastry: 'Pastry' };
 const shortName = (k: IngredientKind) => SHORT_NAME[k] ?? INGREDIENTS[k].name;
 
 type Mark = ObjectiveState; // done | next | todo
@@ -259,6 +260,9 @@ export class Hud {
   private subsText = el('div', 'subs-text');
   private banner = el('div', 'banner hidden');
   private toastEl = el('div', 'toast hidden');
+  /** One-line event notice under the timer (Service Inspection countdown, printed tickets). */
+  private noticeEl = el('div', 'notice hidden');
+  private noticeText = '';
   private screen = el('div', 'screen hidden');
   private subTimer = 0;
   private toastTimer = 0;
@@ -327,7 +331,7 @@ export class Hud {
     this.subs.append(el('i', 'orn'), portrait, subsBody, el('div', 'embers'), el('span', 'subs-pip'));
 
     this.gazeEl.append(this.gazeRing, this.gazeTitle, this.gazeSub);
-    this.play.append(this.gazeEl, this.cutEl, this.crosshair, this.prompt, this.left, this.timerPanel, this.right, this.gaugeEl, this.toastEl);
+    this.play.append(this.gazeEl, this.cutEl, this.crosshair, this.prompt, this.left, this.timerPanel, this.right, this.gaugeEl, this.toastEl, this.noticeEl);
     root.append(this.play, this.subs, this.banner, this.screen);
     this.setPlaying(false);
 
@@ -600,6 +604,15 @@ export class Hud {
     this.subTimer = seconds;
   }
 
+  notice(text: string | null): void {
+    const t = text ?? '';
+    if (t === this.noticeText) return;
+    this.noticeText = t;
+    this.noticeEl.textContent = t;
+    this.noticeEl.classList.toggle('hidden', !t);
+    this.noticeEl.classList.toggle('alert', t.startsWith('SERVICE'));
+  }
+
   showBanner(title: string, sub: string, seconds: number): void {
     this.banner.innerHTML = `<div class="banner-inner"><div class="banner-rule"><i></i><span class="emblem">${ico('trident')}</span><i></i></div><h1>${esc(title)}</h1><p>${esc(sub)}</p><div class="banner-rule"><i></i><span class="gem"></span><i></i></div></div>`;
     this.banner.classList.remove('hidden');
@@ -630,12 +643,22 @@ export class Hud {
     this.screen.classList.add('hidden');
   }
 
-  titleScreen(): HTMLElement {
+  /** Title screen with an episode picker. Picking the other episode reloads into it. */
+  titleScreen(episodes: { id: number; title: string; tagline: string }[] = [], current = 1): HTMLElement {
     const row = (k: string, icon: IconName, t: string) => `<span class="key">${k}</span><span class="ctl-icon">${ico(icon)}</span><span>${t}</span>`;
+    const cur = episodes.find((e) => e.id === current);
+    const tabs = episodes.length
+      ? `<div class="ep-tabs">${episodes.map((e) => `<button class="ep-tab${e.id === current ? ' on' : ''}" data-ep="${e.id}"><small>Episode ${e.id}</small>${esc(e.title)}</button>`).join('')}</div>`
+      : '';
+    const extra =
+      current === 2
+        ? `${row('Trays', 'tray', 'Load food on a sheet tray, slide it in the oven, take it out at the ding')}${row('Assemble', 'plate', 'Hold a topping and click its base (glowing rings show where)')}`
+        : '';
     return this.showScreen(`
       <div class="title-portrait portrait-slot">${this.portraitImg()}</div>
       <h1 class="logo display">Hex Kitchen<span>a cooking horror comedy</span></h1>
-      <p class="tagline">Three rounds. One furious gorgon chef. <b>Don't meet his eyes.</b></p>
+      ${tabs}
+      <p class="tagline">${cur ? esc(cur.tagline) : 'Three rounds. One furious gorgon chef.'} <b>Don't meet his eyes.</b></p>
       <div class="controls">
         ${row('WASD', 'hand', 'Move · <b>Shift</b> sprint · <b>Mouse</b> look')}
         ${row('Click', 'crate', 'Grab / place / drop · flick while dropping to throw')}
@@ -644,6 +667,7 @@ export class Hud {
         ${row('Space / C', 'stone', 'Crouch behind counters for cover')}
         ${row('E', 'bell', "Serve a finished plate: you plate it up first, then it goes out")}
         ${row('F / Q', 'trash', 'F takes off the oven mitts · Q drops what you hold · click the trash can to bin')}
+        ${extra}
       </div>
       <button class="btn" id="start">Enter the Kitchen</button>
       <p class="small">Headphones recommended. Everything you see and hear is generated by code.</p>

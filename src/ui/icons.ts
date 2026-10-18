@@ -54,6 +54,31 @@ export const ICONS = {
       `<path ${S} fill="#5abc38" d="M16 42c5-12 13-22 26-28 1 1 1 3 0 4-11 6-18 16-22 26z"/>` +
       `<circle cx="24" cy="23" r="2" fill="#a8e070"/><circle cx="29" cy="17" r="2" fill="#a8e070"/><circle cx="27" cy="31" r="2" fill="#a8e070"/>`,
   ),
+  sourdough: wrap(
+    `<path ${S} fill="#a8622a" d="M5 32c0-12 8-21 19-21s19 9 19 21c0 4-3 7-8 7H13c-5 0-8-3-8-7z"/>` +
+      `<path fill="none" stroke="#f0e2c8" stroke-width="1.4" stroke-linecap="round" d="M11 27c3-7 8-11 13-11s10 4 13 11M14 33c2-6 6-9 10-9s8 3 10 9" opacity=".75"/>` +
+      `<path ${S} fill="#f6dcae" d="M17 18c3-3 11-3 14 0-2 2-4 3-7 3s-5-1-7-3z"/>` +
+      `<path fill="none" stroke="#6a3410" stroke-width="1.6" stroke-linecap="round" d="M17 18c3 2 11 2 14 0"/>`,
+  ),
+  cheese: wrap(
+    `<path ${S} fill="#f2c040" d="M5 30L38 12l5 6v14L10 40H5z"/>` +
+      `<path ${S} fill="#ffd968" d="M5 30L38 12l5 6L10 36z"/>` +
+      `<path ${S} fill="#d89a24" d="M43 18v14L10 40v-4z"/>` +
+      `<ellipse cx="22" cy="27" rx="3" ry="1.6" fill="#d8a028"/><ellipse cx="32" cy="22" rx="2" ry="1.1" fill="#d8a028"/><circle cx="26" cy="34" r="1.8" fill="#b07a14"/><circle cx="36" cy="30" r="1.3" fill="#b07a14"/>`,
+  ),
+  pastry: wrap(
+    `<path ${S} fill="#f3e0b4" d="M6 16l30-6 6 22-30 6z"/>` +
+      `<path fill="none" stroke="#d8b878" stroke-width="1.4" stroke-linecap="round" d="M10 19l25-5M11 24l25-5M12 29l25-5"/>` +
+      `<path ${S} fill="#e2c48a" d="M12 38l30-6v3l-30 6z"/>` +
+      `<circle cx="16" cy="21" r="1" fill="#ffffff"/><circle cx="29" cy="27" r="1" fill="#ffffff"/><circle cx="22" cy="31" r="1" fill="#ffffff"/>`,
+  ),
+  tray: wrap(
+    `<path ${S} fill="#9aa2aa" d="M4 22l10-8h30l-10 8v12H4z"/>` +
+      `<path ${S} fill="#c8d0d8" d="M4 22l10-8h30l-10 8z"/>` +
+      `<path ${S} fill="#7a828a" d="M34 22l10-8v12l-10 8z"/>` +
+      `<path fill="#e0e6ec" d="M8 21l7-5h22l-7 5z"/>` +
+      `<ellipse cx="20" cy="18.6" rx="3.5" ry="1.2" fill="#b07a3a" opacity=".55"/><ellipse cx="28" cy="17.6" rx="2" ry=".8" fill="#b07a3a" opacity=".45"/>`,
+  ),
   salt: wrap(
     `<path ${S} fill="#e8eef2" d="M15 18h18l2 22c0 2-1 3-3 3H16c-2 0-3-1-3-3z"/>` +
       `<path ${S} fill="#b8c0c8" d="M16 18c0-7 3-12 8-12s8 5 8 12z"/>` +

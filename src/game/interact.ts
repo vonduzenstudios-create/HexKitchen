@@ -9,6 +9,7 @@ import type { Item, Items } from './items';
 import type { Kitchen, StationId } from './kitchen';
 import type { Player } from './player';
 import { WORKABLE, type Stations, type PlateId } from './stations';
+import { assemble, canCarry, carrierSpots, freeSpot, partFor, partNeedsPrep, ruleFor } from './assembly';
 
 export type Target =
   | { type: 'item'; item: Item; point: THREE.Vector3; station: StationId | null }
@@ -18,7 +19,8 @@ export type Target =
   | { type: 'trash'; point: THREE.Vector3 }
   | { type: 'plateStack'; point: THREE.Vector3 }
   | { type: 'mitts'; point: THREE.Vector3 }
-  | { type: 'hook'; point: THREE.Vector3 };
+  | { type: 'hook'; point: THREE.Vector3 }
+  | { type: 'prop'; name: 'toaster' | 'deskBell'; point: THREE.Vector3 };
 
 export interface InteractEvents {
   serve(plates: PlateId[]): void;
@@ -28,6 +30,12 @@ export interface InteractEvents {
   burnedHand(item: Item): void;
   /** Holding the extinguisher with the button down: spray from `from` along `dir`. */
   spray(from: THREE.Vector3, dir: THREE.Vector3, dt: number): void;
+  /** A hotel set piece was clicked. Return true if it took the held item. */
+  prop(name: 'toaster' | 'deskBell', held: Item | null): boolean;
+  /** Clicked the service trolley: toggle its wheel locks. */
+  trolley(trolley: Item): void;
+  /** A part went onto its base; done = the assembly is complete. */
+  assembled(base: Item, done: boolean): void;
 }
 
 const REACH = 2.4;
@@ -89,8 +97,10 @@ export class Interaction {
         return { type: 'item', item: it, point: h.point, station: it.where === 'station' ? it.station : null };
       }
       let o: THREE.Object3D | null = h.object;
-      while (o && !o.userData.station && !o.userData.bin && !o.userData.bell && !o.userData.trash && !o.userData.plateStack && !o.userData.mitts) o = o.parent;
+      while (o && !o.userData.station && !o.userData.bin && !o.userData.bell && !o.userData.trash && !o.userData.plateStack && !o.userData.mitts && !o.userData.toaster && !o.userData.deskBell) o = o.parent;
       if (!o) continue;
+      if (o.userData.toaster) return { type: 'prop', name: 'toaster', point: h.point };
+      if (o.userData.deskBell) return { type: 'prop', name: 'deskBell', point: h.point };
       if (o.userData.station) return { type: 'station', id: o.userData.station, point: h.point };
       if (o.userData.bin) return { type: 'bin', kind: o.userData.bin, point: h.point };
       if (o.userData.bell) return { type: 'bell', point: h.point };
@@ -109,15 +119,40 @@ export class Interaction {
   private targetStation(t: Target | null): StationId | null {
     if (!t) return null;
     if (t.type === 'station') return t.id;
-    if (t.type === 'item') return t.station;
+    if (t.type === 'item') return t.station ?? (t.item.root().where === 'station' ? t.item.root().station : null);
     return null;
   }
 
+  /** The tray or trolley an item sits on (or is). */
+  private carrierOf(item: Item): Item | null {
+    let c: Item | null = item;
+    while (c && c.kind !== 'tray' && c.kind !== 'trolley') c = c.carrier;
+    return c;
+  }
+
+  private spotsFor(carrier: Item): THREE.Vector3[] {
+    const tr = this.kitchen.hotel?.trolley;
+    return carrierSpots(carrier, tr?.top, tr?.size);
+  }
+
   grab(item: Item): void {
-    const from = item.where === 'station' ? item.station : null;
-    const hot = from === 'pan' || from === 'pot' || from === 'fryer';
+    if (item.kind === 'trolley') {
+      this.events.trolley(item);
+      return;
+    }
+    const root = item.root();
+    const from = root.where === 'station' ? root.station : null;
+    const hot = from === 'pan' || from === 'pot' || from === 'fryer' || from === 'oven';
+    // Picking a piece off a tray or trolley lifts it (and anything assembled on it) away.
+    if (item.carrier) {
+      // A part tucked into an assembly lifts the whole assembly.
+      let base = item;
+      while (base.carrier && base.carrier.kind !== 'tray' && base.carrier.kind !== 'trolley') base = base.carrier;
+      if (base.carrier) base.detach();
+      item = base;
+    }
     if (hot && !this.wearingMitts) {
-      // Barehanded into a hot pan: yelp, and it goes flying.
+      // Barehanded into a hot pan or oven: yelp, and it goes flying.
       this.stations.take(item);
       item.where = 'world';
       item.setKinematic(false);
@@ -146,6 +181,18 @@ export class Interaction {
     it.setKinematic(false);
     const v = this.holdVel.clone();
     const speed = v.length();
+    // A loaded tray set down gently on a surface lands flat instead of being dropped from hand height.
+    if (it.kind === 'tray' && speed < 3) {
+      const p = this.surfacePoint();
+      if (p) {
+        it.body.setTranslation({ x: p.x, y: p.y + 0.015, z: p.z }, true);
+        it.body.setRotation(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.player.yaw), true);
+        it.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        it.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        audio.play('clang', { pos: p, volume: 0.4, pitch: 1.1 });
+        return;
+      }
+    }
     if (speed > 12) v.multiplyScalar(12 / speed);
     it.body.setLinvel({ x: v.x, y: v.y, z: v.z }, true);
     it.body.setAngvel({ x: (Math.random() - 0.5) * speed, y: (Math.random() - 0.5) * speed, z: (Math.random() - 0.5) * speed }, true);
@@ -156,11 +203,50 @@ export class Interaction {
     this.mirrorRaised = false;
   }
 
-  /** Put the held item somewhere specific (station, hook). */
-  private releaseInto(): boolean {
+  /** Where the crosshair meets the set (counters, floor) within reach, if it's a flat-ish top surface. */
+  private surfacePoint(): THREE.Vector3 | null {
+    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.player.camera);
+    const hits = this.raycaster.intersectObject(this.kitchen.root, true);
+    for (const h of hits) {
+      if (!h.face) continue;
+      const n = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+      if (n.y > 0.8) return h.point;
+    }
+    return null;
+  }
+
+  /** Put the held item somewhere specific (station, hook, assembly base, tray). 'refused' keeps it in hand. */
+  private releaseInto(): boolean | 'refused' {
     const it = this.held;
     const t = this.target;
     if (!it || !t) return false;
+    if (t.type === 'prop') {
+      if (this.events.prop(t.name, it)) {
+        if (this.held === it) this.held = null;
+        return true;
+      }
+      return 'refused';
+    }
+    if (t.type === 'item') {
+      // Onto an assembly base: tomato onto toast, cheese into a mushroom, beef into pastry.
+      if (partFor(t.item, it)) {
+        this.held = null;
+        const done = assemble(t.item, it);
+        this.events.assembled(t.item, done);
+        return true;
+      }
+      if (partNeedsPrep(t.item, it)) return 'refused';
+      // Onto a tray or the trolley (aiming at it or at anything already on it).
+      const carrier = this.carrierOf(t.item);
+      if (carrier && carrier !== it && canCarry(carrier, it)) {
+        const spot = freeSpot(carrier, this.spotsFor(carrier), t.point);
+        if (!spot) return 'refused';
+        this.held = null;
+        carrier.attach(it, spot, new THREE.Quaternion());
+        audio.play(carrier.kind === 'tray' ? 'clang' : 'drop', { pos: t.point, volume: 0.35, pitch: 1.3 });
+        return true;
+      }
+    }
     if (t.type === 'hook' && it.kind === 'mirrorPan') {
       this.held = null;
       it.where = 'hook';
@@ -224,7 +310,9 @@ export class Interaction {
           this.held = null;
           this.events.binned(it);
         } else if (this.held) {
-          if (!this.releaseInto()) this.drop();
+          const r = this.releaseInto();
+          if (r === 'refused') audio.play('click', { volume: 0.5, pitch: 0.6 });
+          else if (!r) this.drop();
         } else if (t) {
           if (t.type === 'item') {
             if (t.station && WORKABLE.includes(t.station) && this.isWorkable(t.station, t.item)) {
@@ -249,6 +337,8 @@ export class Interaction {
           } else if (t.type === 'bell') {
             audio.play('bell', { pos: this.kitchen.bell });
             this.events.serve(['plateA', 'plateB']);
+          } else if (t.type === 'prop') {
+            this.events.prop(t.name, null);
           }
         }
       }
@@ -359,19 +449,46 @@ export class Interaction {
       if (this.held.kind === 'extinguisher') return 'Hold click: spray at the fire  ·  Q: put it down';
       if (!t) return `Holding ${this.held.name}  ·  Click: drop / flick to throw${this.held.kind === 'mirrorPan' ? '  ·  Right-click: raise mirror' : ''}`;
       if (t.type === 'hook' && this.held.kind === 'mirrorPan') return 'Click: hang the pan back up';
+      if (t.type === 'prop') {
+        if (t.name === 'toaster') return this.held.kind === 'sourdough' && this.held.cook.chopped ? 'Click: drop the slice in the toaster (stand back!)' : 'The toaster only takes sourdough slices';
+        return 'Click: ring the desk bell (Gorgon WILL come)';
+      }
+      if (t.type === 'item') {
+        const name = this.held.name.toLowerCase();
+        if (partFor(t.item, this.held)) return `Click: put the ${name} on the ${t.item.name.toLowerCase()}`;
+        if (partNeedsPrep(t.item, this.held)) return `Chop the ${name} first, then it goes on the ${t.item.name.toLowerCase()}`;
+        const carrier = this.carrierOf(t.item);
+        if (carrier && carrier !== this.held && canCarry(carrier, this.held)) {
+          if (!freeSpot(carrier, this.spotsFor(carrier))) return carrier.kind === 'tray' ? 'That tray is full' : 'The trolley is full';
+          return `Click: put the ${name} on the ${carrier.kind === 'tray' ? 'tray' : 'trolley'}`;
+        }
+        const rule = ruleFor(t.item);
+        if (rule && this.held.isIngredient && !t.item.displayName) return `The ${t.item.name.toLowerCase()} takes: ${rule.parts.map((p) => `${p.chopped ? 'chopped ' : ''}${p.kind}`).join(' + ')}`;
+      }
       if (t.type === 'trash' && this.held.kind !== 'mirrorPan') return `Click: bin the ${this.held.name}`;
       const st = this.targetStation(t);
       if (st) {
+        if (st === 'oven') {
+          if (this.held.kind === 'tray') return this.stations.canPlace('oven', this.held) ? 'Click: slide the tray into the oven' : 'The oven already has a tray in it';
+          return 'Only trays go in the oven: put the food on a sheet tray first';
+        }
         if (this.stations.canPlace(st, this.held)) return `Click: place ${this.held.name}`;
         if (this.stations.isBurning(st)) return "It's ON FIRE! Grab the extinguisher by the stove";
         if ((st === 'plateA' || st === 'plateB') && !this.stations.hasPlate[st]) return 'Put a clean plate here first (stack at the back of the pass)';
         return 'That spot is full';
       }
+      if (this.held.kind === 'tray') return `Holding ${this.held.name}  ·  Click a counter to set it down  ·  Don't drop it!`;
       return `Holding ${this.held.name}  ·  Click: drop`;
     }
     if (!t) return '';
     switch (t.type) {
       case 'item': {
+        if (t.item.kind === 'trolley') return `Click: ${this.kitchen.hotel && t.item.anim.flip ? 'unlock' : 'lock'} the trolley wheels`;
+        const rootSt = t.item.root().where === 'station' ? t.item.root().station : null;
+        if (rootSt === 'oven') {
+          const what = t.item.kind === 'tray' ? 'the tray' : t.item.name;
+          return this.wearingMitts ? `Click: take ${what} out of the oven` : `HOT! Put on the oven mitts first  ·  Click: grab ${what} anyway`;
+        }
         if (t.station && WORKABLE.includes(t.station) && this.isWorkable(t.station, t.item)) {
           const verb = t.station === 'board' ? 'chop' : t.station === 'prep' ? 'season' : 'flip';
           if (t.station === 'board' && this.wearingMitts) return `Hold click: chop (clumsy in mitts! F: take them off)  ·  Tap: take ${t.item.name}`;
@@ -391,6 +508,8 @@ export class Interaction {
         return 'Click: ring the bell to serve all plates';
       case 'hook':
         return '';
+      case 'prop':
+        return t.name === 'toaster' ? 'Toaster: drop a sourdough slice in. It launches!' : 'Click: ring the desk bell (Gorgon WILL come)';
       case 'trash':
         return 'Trash: bin dropped food here before Gorgon finds it';
       case 'mitts':

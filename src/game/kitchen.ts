@@ -67,6 +67,8 @@ export interface Kitchen {
   /** Trash can: centre of its base on the floor. */
   trash: THREE.Vector3;
   mirrorHook: THREE.Vector3;
+  /** Counter spot where the fire extinguisher stands (defaults to beside the basement stove). */
+  extinguisher?: THREE.Vector3;
   /** Episode 2 only. */
   oven?: OvenRig;
   hotel?: HotelSet;

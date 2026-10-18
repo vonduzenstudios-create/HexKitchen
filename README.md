@@ -30,7 +30,11 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 | Hold click with the extinguisher | Spray it at a fire |
 | Plating Mode | Mouse moves the cursor; click picks up and sets down, scroll rotates, right-click or 1-4 switches tool (arrange, sauce, garnish, wipe), Shift for fine control, E to finish |
 
-## The episode
+## Episodes
+
+Pick the episode on the title screen (or open the page with `?ep=2`).
+
+### Episode 1: The Audition
 
 The **What to do** list on the right walks you through each dish one step at a time, with a hint for the current step.
 
@@ -49,6 +53,24 @@ The **What to do** list on the right walks you through each dish one step at a t
 **Gorgon's Wrath** rises with bad dishes, burnt food, dropped food and fires, and makes his interruptions more frequent. **Petrification** rises when you fail dishes or meet his gaze; at 100% you become a statue. Perfect dishes calm him and chip the stone away.
 
 His interruptions: **inspections** (turn around and show him what you're holding), the **petrifying gaze** (look away, hide behind a counter, or reflect it with the polished pan right as it lands), **sabotage** (he knocks food off your station or bins your plate), and **Stone Cold** (after each round he petrifies a rival, whose statue stays in your kitchen).
+
+### Episode 2: The Last Resort
+
+You've been promoted upstairs to a cursed hotel restaurant. A service hatch looks out over a dining room of petrified guests, the tall windows sometimes show something that shouldn't be there, and the kitchen has an oven.
+
+| Round | Time | Dish |
+| --- | --- | --- |
+| 1. Continental Dreadfast | 4:30 | Tomato toast: slice the sourdough, chop a tomato, top the toast and bake it |
+| 2. Room Service | 7:00 | Stuffed Mushrooms (top mushrooms with grated cheese, bake) and Steak & Roast Potatoes (pan-fried steak, seasoned potatoes baked in the oven) |
+| 3. The Honeymoon Suite | 6:00 | A pastry-wrapped Wellington: sear the beef, lay it and chopped mushroom on the pastry, bake, with boiled green beans |
+
+**Oven cooking.** Hold a part and click its base to assemble (glowing rings show where it goes). Set food on a sheet tray from the rack beside the oven and slide the tray in. The clip-on timer counts down and dings when it's ready; the oven light, browning and sizzle tell you too, and the ready window is generous. Use oven mitts to take hot food out. A dropped tray spills everything on it.
+
+**Service Inspection.** Every so often Gorgon announces he's checking the oven and plants himself beside it on your side. Go round the island, do something else, or ring the desk bell to lure him away (he tires of it fast). He always steps aside once food is ready.
+
+**Hotel gags.** The service trolley rolls when its red wheel locks are off (click it to toggle) and dumps its load if it crashes. The toaster rattles before it launches the toast: catch it, or land it on a plate for applause. The ticket printer spits out guests' requests.
+
+**Plating feedback.** During plating, a "Gorgon wants" tip names the best next fix, rings on the plate show what's off-centre, crowded or touching the rim, and the result lists what to try next time.
 
 ## Gorgon's recorded voice
 

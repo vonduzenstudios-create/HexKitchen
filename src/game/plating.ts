@@ -29,10 +29,21 @@ export interface PlatingBreakdown {
   speed: number;
 }
 
+export interface PlatingNote {
+  label: string;
+  got: number;
+  max: number;
+  /** Plain-language reason for the score, e.g. "2 smudges left on the rim". */
+  note: string;
+}
+
 export interface PlatingResult {
   score: number;
   grade: string;
   breakdown: PlatingBreakdown;
+  notes: PlatingNote[];
+  /** The one or two things that would have improved it most. */
+  fixes: string[];
 }
 
 export interface PlatingView {
@@ -44,6 +55,8 @@ export interface PlatingView {
   grade: string;
   checklist: { label: string; done: boolean }[];
   holding: boolean;
+  /** The single most useful thing to do right now, in plain words. */
+  tip: string;
 }
 
 export function platingGrade(score: number): string {
@@ -56,6 +69,10 @@ export function platingGrade(score: number): string {
 
 const SAUCE_COLOR: Record<string, number> = {
   caesar: 0xd8b860,
+  toast: 0x3a6a20,
+  stuffedMushrooms: 0xe8d8a0,
+  steakRoast: 0x5a2a14,
+  honeymoon: 0x4a1a10,
   steakFries: 0x5a2a14,
   spaghetti: 0xc0281a,
   wellington: 0x4a1a10,
@@ -91,6 +108,20 @@ export class PlatingMode {
   private center = new THREE.Vector3();
   private shakeT = 0;
   private sauceMat: THREE.Material = mat(0xffffff);
+  /** Light-touch visual cues: where the centre is, what's crowded, what's over the rim, what to wipe. */
+  private cues = new THREE.Group();
+  private centerRing: THREE.Mesh;
+  private rimRing: THREE.Mesh;
+  private clash: THREE.Mesh[] = [];
+  private halos: THREE.Mesh[] = [];
+  private cueMat = (c: number, o: number) => {
+    const m = basic(c, { transparent: true, opacity: o, side: THREE.DoubleSide });
+    m.depthTest = false;
+    return m;
+  };
+  /** Plating is approached from the cook's side: d points from the cook to the plate, r is screen-right. */
+  private d = new THREE.Vector3(1, 0, 0);
+  private r = new THREE.Vector3(0, 0, 1);
 
   constructor(
     private scene: THREE.Scene,
@@ -105,7 +136,19 @@ export class PlatingMode {
     this.cursorMesh.visible = false;
     this.cursorMesh.renderOrder = 10;
     (this.cursorMesh.material as THREE.Material).depthTest = false;
-    scene.add(this.cursorMesh, this.sauceGroup, this.garnishGroup);
+    const flat = (g: THREE.BufferGeometry, m: THREE.Material) => {
+      const mesh = new THREE.Mesh(g, m);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.renderOrder = 9;
+      this.cues.add(mesh);
+      return mesh;
+    };
+    this.centerRing = flat(new THREE.RingGeometry(0.084, 0.09, 48), this.cueMat(0xffd36a, 0.45));
+    this.rimRing = flat(new THREE.RingGeometry(0.168, 0.174, 64), this.cueMat(0xff5a3a, 0.5));
+    for (let i = 0; i < 3; i++) this.clash.push(flat(new THREE.RingGeometry(0.045, 0.052, 24), this.cueMat(0xff4a2a, 0.75)));
+    for (let i = 0; i < 6; i++) this.halos.push(flat(new THREE.RingGeometry(0.022, 0.028, 18), this.cueMat(0xff8a3a, 0.8)));
+    this.cues.visible = false;
+    scene.add(this.cursorMesh, this.sauceGroup, this.garnishGroup, this.cues);
   }
 
   /** Begin plating a complete dish. Seconds of plating time depend on the dish and Gorgon's mood. */
@@ -121,8 +164,9 @@ export class PlatingMode {
     this.timeMax = (boss ? 48 : n >= 2 && ticket.recipe.id !== 'caesar' ? 38 : 30) * (1 - 0.2 * (this.wrath() / 100));
     this.timeLeft = this.timeMax;
     this.cursor.set(0, 0);
+    // Parts riding on an assembled base move with it, so only free pieces are arranged.
     this.comps = this.stations.plates[plate].slots
-      .filter((s) => s.item)
+      .filter((s) => s.item && !s.item.carrier)
       .map((s) => ({ item: s.item!, pos: new THREE.Vector2(s.offset.x, s.offset.z), rot: 0, q0: s.item!.group.quaternion.clone() }));
     // Rushed assembly leaves a couple of smudges on the rim.
     this.clearDecor();
@@ -130,9 +174,14 @@ export class PlatingMode {
     this.sauceMat = mat(SAUCE_COLOR[ticket.recipe.id] ?? 0x7a2a14, { roughness: 0.25 });
     this.barkT = 3;
     this.cursorMesh.visible = true;
-    // Swoop the camera into a 3/4 view over the plate, from the cook's side of the pass.
+    this.cues.visible = true;
+    // Swoop the camera into a 3/4 view over the plate, from whichever side the cook is standing.
+    this.d.copy(this.center).sub(this.player.position).setY(0);
+    if (this.d.lengthSq() < 1e-4) this.d.set(1, 0, 0);
+    this.d.normalize();
+    this.r.crossVectors(this.d, new THREE.Vector3(0, 1, 0)).normalize();
     this.player.cameraOverride = {
-      pos: new THREE.Vector3(base.x - 0.42, COUNTER_TOP + 0.52, base.z + 0.06),
+      pos: this.center.clone().addScaledVector(this.d, -0.42).addScaledVector(this.r, 0.06).setY(COUNTER_TOP + 0.52),
       look: this.center.clone(),
     };
     audio.play('whoosh', { volume: 0.5 });
@@ -145,6 +194,7 @@ export class PlatingMode {
     this.active = false;
     this.held = null;
     this.cursorMesh.visible = false;
+    this.cues.visible = false;
     this.player.cameraOverride = null;
     // Write the arrangement back to the plate slots so the dish keeps its look until it's served.
     const slots = this.stations.plates[this.plate].slots;
@@ -155,7 +205,13 @@ export class PlatingMode {
         s.placement = Math.max(0.4, score / 100);
       }
     }
-    return { score, grade: platingGrade(score), breakdown: b };
+    const notes = this.notes(b);
+    const fixes = notes
+      .filter((n) => n.got < n.max * 0.8 && n.label !== 'Speed')
+      .sort((a, c) => a.got / a.max - c.got / c.max)
+      .slice(0, 2)
+      .map((n) => n.note);
+    return { score, grade: platingGrade(score), breakdown: b, notes, fixes };
   }
 
   /** Remove the sauce, garnish and smudges (the plate has gone out). */
@@ -178,10 +234,11 @@ export class PlatingMode {
     this.timeLeft -= dt;
     const w = this.wrath() / 100;
 
-    // Cursor: mouse moves it across the plate. Screen right is +z, screen up is +x (away from you).
+    // Cursor: mouse moves it across the plate. Screen right is r, screen up is d (away from you).
     const fine = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight') ? 0.35 : 1;
-    this.cursor.y += input.mouseDX * 0.0011 * fine;
-    this.cursor.x -= input.mouseDY * 0.0011 * fine;
+    const k = 0.0011 * fine;
+    this.cursor.x += (this.r.x * input.mouseDX - this.d.x * input.mouseDY) * k;
+    this.cursor.y += (this.r.z * input.mouseDX - this.d.z * input.mouseDY) * k;
     // An angry Gorgon gives you the shakes.
     this.shakeT += dt * 13;
     this.cursor.x += Math.sin(this.shakeT * 1.7) * 0.0009 * w;
@@ -254,6 +311,8 @@ export class PlatingMode {
       c.item.drive(p, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), c.rot).multiply(c.q0));
     }
 
+    this.updateCues();
+
     // Gorgon backseat-judges whatever is worst right now.
     this.barkT -= dt;
     if (this.barkT <= 0) {
@@ -276,6 +335,7 @@ export class PlatingMode {
       score,
       grade: platingGrade(score),
       holding: !!this.held,
+      tip: this.tip(b),
       checklist: [
         { label: 'Main in the centre', done: b.highlight >= 12 },
         { label: 'Space the sides out', done: b.spacing >= 16 },
@@ -346,6 +406,90 @@ export class PlatingMode {
       garnish: 10 * garnish,
       speed: 5 * THREE.MathUtils.clamp(this.timeLeft / Math.max(1, this.timeMax) + 0.3, 0, 1),
     };
+  }
+
+  private main(): Comp | undefined {
+    return this.comps[0];
+  }
+
+  /** Two pieces sitting too close together, if any. */
+  private crowded(): [Comp, Comp] | null {
+    let best: [Comp, Comp] | null = null;
+    let bd = 0.08;
+    for (let i = 0; i < this.comps.length; i++)
+      for (let j = i + 1; j < this.comps.length; j++) {
+        const dd = this.comps[i].pos.distanceTo(this.comps[j].pos);
+        if (dd < bd) {
+          bd = dd;
+          best = [this.comps[i], this.comps[j]];
+        }
+      }
+    return best;
+  }
+
+  private sauceLength(): number {
+    return this.sauceStrokes.reduce((sum, st) => sum + st.reduce((l, p, i) => (i ? l + p.distanceTo(st[i - 1]) : 0), 0), 0);
+  }
+
+  /** Per-category scores with the reason in plain words, so the grade is never a mystery. */
+  private notes(b: PlatingBreakdown): PlatingNote[] {
+    const lower = (c: Comp) => c.item.name.toLowerCase();
+    const main = this.main();
+    const pair = this.crowded();
+    const over = this.comps.filter((c) => c.pos.length() > 0.17);
+    const len = this.sauceLength();
+    const n = this.sauceStrokes.length;
+    return [
+      { label: 'Centrepiece', got: b.highlight, max: 15, note: b.highlight >= 12 ? `The ${main ? lower(main) : 'main'} sits in the centre` : `Put the ${main ? lower(main) : 'main'} inside the gold ring in the middle` },
+      { label: 'Spacing', got: b.spacing, max: 20, note: pair ? `The ${lower(pair[0])} and ${lower(pair[1])} are touching: give them room` : 'Everything has room to breathe' },
+      { label: 'Balance', got: b.balance, max: 20, note: b.balance >= 16 ? 'Evenly arranged around the centre' : 'Everything is bunched to one side: spread it around the middle' },
+      {
+        label: 'Clean rim',
+        got: b.rim,
+        max: 15,
+        note: this.splatters.length ? `Wipe the ${this.splatters.length} smudge${this.splatters.length > 1 ? 's' : ''} glowing on the rim (tool 4)` : over.length ? `The ${lower(over[0])} hangs over the red rim line: bring it in` : 'Spotless rim',
+      },
+      {
+        label: 'Sauce',
+        got: b.sauce,
+        max: 15,
+        note: n === 0 ? 'Add ONE swipe of sauce (tool 2)' : n > 1 ? `${n} sauce strokes: Gorgon wanted just one` : len < 0.1 ? 'The swipe was a dot: drag a longer stroke' : len > 0.4 ? 'The swipe was too long: drowning it' : 'One elegant swipe',
+      },
+      { label: 'Garnish', got: b.garnish, max: 10, note: this.garnishes === 0 ? 'A pinch of garnish would finish it (tool 3)' : this.garnishes > 3 ? 'Way too much garnish: less is more' : 'Just the right pinch of garnish' },
+      { label: 'Speed', got: b.speed, max: 5, note: 'Faster plating, hotter food' },
+    ];
+  }
+
+  /** The most useful thing to do next, worded as an instruction. */
+  private tip(b: PlatingBreakdown): string {
+    const worst = this.notes(b)
+      .filter((n) => n.label !== 'Speed')
+      .sort((a, c) => a.got / a.max - c.got / c.max)[0];
+    if (!worst || worst.got >= worst.max * 0.85) return 'Looking good. Press E to send it.';
+    return worst.note;
+  }
+
+  private updateCues(): void {
+    const b = this.evaluate();
+    const t = performance.now() / 1000;
+    const at = (m: THREE.Mesh, p: THREE.Vector2, lift = 0.004) => m.position.copy(this.world(p)).setY(this.center.y - 0.004 + lift);
+    at(this.centerRing, new THREE.Vector2());
+    this.centerRing.visible = b.highlight < 12;
+    at(this.rimRing, new THREE.Vector2());
+    this.rimRing.visible = this.comps.some((c) => c.pos.length() > 0.17);
+    const pair = this.crowded();
+    this.clash.forEach((m, i) => {
+      const c = pair && i < 2 ? pair[i] : null;
+      m.visible = !!c;
+      if (c) at(m, c.pos, 0.03);
+    });
+    this.halos.forEach((m, i) => {
+      const sp = this.splatters[i];
+      m.visible = !!sp;
+      if (!sp) return;
+      m.position.copy(sp.position).setY(sp.position.y + 0.003);
+      m.scale.setScalar(1 + 0.2 * Math.sin(t * 7 + i));
+    });
   }
 
   private worstIssue(): LineKey {

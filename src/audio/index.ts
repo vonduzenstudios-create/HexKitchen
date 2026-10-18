@@ -67,6 +67,17 @@ export const voice = {
     try { return voicePlayer.say(text, opts); } catch (e) { console.warn('[audio]', e); return Promise.resolve(); }
   },
   stop(): void { safe(() => voicePlayer.stop(), undefined); },
+  /** Drop Gorgon's voice under an important cue (the oven timer ding) for a moment. */
+  duck(seconds = 1.2, level = 0.25): void {
+    safe(() => {
+      const ctx = engine.ctx;
+      if (!ctx || !engine.voiceBus) return;
+      const g = engine.voiceBus.gain;
+      g.cancelScheduledValues(ctx.currentTime);
+      g.setTargetAtTime(level, ctx.currentTime, 0.02);
+      g.setTargetAtTime(1, ctx.currentTime + seconds, 0.2);
+    }, undefined);
+  },
   isSpeaking(): boolean { return safe(() => voicePlayer.isSpeaking(), false); },
   /** Seconds the line will take (deterministic; same timing plan the synth uses). */
   estimateDuration(text: string, opts?: SayOpts): number { return safe(() => voicePlayer.estimateDuration(text, opts), 1); },

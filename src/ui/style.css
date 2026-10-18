@@ -499,3 +499,26 @@ html, body {
 .gaze-warn.unsafe .gaze-sub { border-color: #ff4a2a; background: rgba(30, 4, 2, 0.85); box-shadow: 0 0 0.8em rgba(255, 50, 20, 0.6); }
 @keyframes gaze-throb { to { transform: translateX(-50%) scale(1.08); } }
 @keyframes gaze-flash { 50% { opacity: 0.35; } }
+
+/* ------------------------------------------------------------------ event notice (Episode 2) */
+.notice {
+  position: absolute; top: 7.2em; left: 50%; transform: translateX(-50%);
+  max-width: 34em; padding: 0.45em 1.1em; border-radius: 0.4em; text-align: center;
+  background: rgba(16, 9, 6, 0.88); border: 1px solid rgba(255, 170, 60, 0.55); color: var(--ink);
+  font-size: 0.95em; font-weight: 600; box-shadow: 0 0.3em 0.8em rgba(0, 0, 0, 0.5);
+}
+.notice.alert {
+  color: #ffe2b0; border-color: #ff6a2a; font-family: var(--font-display); letter-spacing: 0.06em; font-weight: 700;
+  animation: notice-pulse 0.8s ease-in-out infinite alternate;
+}
+@keyframes notice-pulse { to { box-shadow: 0 0 1.2em rgba(255, 90, 20, 0.6); } }
+
+.ep-tabs { display: flex; gap: 0.6em; justify-content: center; margin: 0.6em 0 0.2em; }
+.ep-tab {
+  font-family: var(--font-display); font-weight: 700; font-size: 1.05em; color: var(--ink-dim); cursor: pointer;
+  padding: 0.45em 1.1em; border-radius: 0.3em; border: 1px solid rgba(255, 170, 60, 0.35); background: rgba(20, 10, 6, 0.6);
+  display: flex; flex-direction: column; align-items: center; gap: 0.1em; transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ep-tab small { font-family: var(--font-body, Inter, sans-serif); font-size: 0.68em; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.8; }
+.ep-tab:hover { color: var(--ink); border-color: var(--gold); }
+.ep-tab.on { color: var(--gold-hi); border-color: var(--gold); background: rgba(120, 40, 10, 0.55); box-shadow: 0 0 0.8em rgba(255, 110, 20, 0.35); }

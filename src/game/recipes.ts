@@ -1,11 +1,13 @@
 import type { IngredientKind } from './ingredients';
 import type { LineKey } from './lines';
 
-export type Step = 'chop' | 'season' | 'fry' | 'boil' | 'deepfry';
+export type Step = 'chop' | 'season' | 'fry' | 'boil' | 'deepfry' | 'bake';
 
 export interface Component {
   kind: IngredientKind;
   steps: Step[];
+  /** Assembled onto this base before baking (tomato onto the toast, beef into the pastry). */
+  onto?: IngredientKind;
 }
 
 export interface Recipe {
@@ -48,6 +50,42 @@ export const RECIPES: Record<string, Recipe> = {
       { kind: 'greens', steps: ['boil'] },
     ],
   },
+
+  // ---- Episode 2: The Last Resort ----
+  toast: {
+    id: 'toast',
+    name: 'Dreadfast Tomato Toast',
+    components: [
+      { kind: 'sourdough', steps: ['chop', 'bake'] },
+      { kind: 'tomato', steps: ['chop', 'bake'], onto: 'sourdough' },
+    ],
+  },
+  stuffedMushrooms: {
+    id: 'stuffedMushrooms',
+    name: 'Stuffed Mushrooms',
+    components: [
+      { kind: 'mushroom', steps: ['bake'] },
+      { kind: 'cheese', steps: ['chop', 'bake'], onto: 'mushroom' },
+    ],
+  },
+  steakRoast: {
+    id: 'steakRoast',
+    name: 'Steak & Roast Potatoes',
+    components: [
+      { kind: 'steak', steps: ['season', 'fry'] },
+      { kind: 'potato', steps: ['chop', 'season', 'bake'] },
+    ],
+  },
+  honeymoon: {
+    id: 'honeymoon',
+    name: 'The Honeymoon Wellington',
+    components: [
+      { kind: 'pastry', steps: ['bake'] },
+      { kind: 'beef', steps: ['season', 'fry'], onto: 'pastry' },
+      { kind: 'mushroom', steps: ['chop'], onto: 'pastry' },
+      { kind: 'greens', steps: ['boil'] },
+    ],
+  },
 };
 
 export const STEP_LABEL: Record<Step, string> = {
@@ -56,6 +94,7 @@ export const STEP_LABEL: Record<Step, string> = {
   fry: 'pan-fry',
   boil: 'boil',
   deepfry: 'deep-fry',
+  bake: 'bake',
 };
 
 /** Cooking state carried by every ingredient item. */
@@ -67,11 +106,13 @@ export interface CookState {
   fry: [number, number];
   boil: number;
   deepfry: number;
+  /** Oven (or toaster) doneness. */
+  bake: number;
   floor: boolean;
 }
 
 export function freshCookState(): CookState {
-  return { chopped: false, chopHits: 0, chopScoreSum: 0, season: 0, fry: [0, 0], boil: 0, deepfry: 0, floor: false };
+  return { chopped: false, chopHits: 0, chopScoreSum: 0, season: 0, fry: [0, 0], boil: 0, deepfry: 0, bake: 0, floor: false };
 }
 
 // Doneness values: 1.0 is perfect. Generous windows keep it forgiving.
@@ -83,6 +124,15 @@ function doneness(v: number): number {
   if (v < 0.15) return 0;
   if (v > 1.8) return 0;
   return Math.max(0, Math.min(1, 1 - Math.max(0, Math.abs(v - 1) - DONE_WINDOW) / 0.55));
+}
+
+/** Ovens are slower but more forgiving than pans: a wide golden window, then a gentle slide to charcoal. */
+export const BAKE_WINDOW: [number, number] = [0.8, 1.35];
+function bakeScore(v: number): number {
+  if (v < 0.15) return 0;
+  if (v >= BAKE_WINDOW[0] && v <= BAKE_WINDOW[1]) return 1;
+  if (v < BAKE_WINDOW[0]) return Math.max(0, 1 - (BAKE_WINDOW[0] - v) / 0.5);
+  return Math.max(0, 1 - (v - BAKE_WINDOW[1]) / 0.6);
 }
 
 export function seasonScore(v: number): number {
@@ -102,6 +152,8 @@ export function stepScore(s: CookState, step: Step): number {
       return doneness(s.boil);
     case 'deepfry':
       return doneness(s.deepfry);
+    case 'bake':
+      return bakeScore(s.bake);
   }
 }
 
@@ -129,6 +181,10 @@ export function stepIssue(s: CookState, step: Step): LineKey | null {
       if (v < 0.6) return 'raw';
       return null;
     }
+    case 'bake':
+      if (s.bake > BAKE_WINDOW[1] + 0.25) return 'burnt';
+      if (s.bake < BAKE_WINDOW[0] - 0.2) return 'underbaked';
+      return null;
   }
 }
 

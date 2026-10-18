@@ -37,9 +37,14 @@ body.plating-on #hud .hud-left, body.plating-on #hud .hud-right, body.plating-on
 #plating .pl-tool.on { border-color: #ffcf6a; background: rgba(255,160,40,.16); opacity: 1; box-shadow: 0 0 12px rgba(255,160,40,.35); }
 #plating .pl-keys { font-size: 12px; line-height: 1.8; opacity: .85; }
 #plating .pl-keys kbd { background: #2a130b; border: 1px solid #b8862f; border-radius: 4px; padding: 0 5px; font-size: 11px; }
-#plating .pl-hint { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); font-size: 15px; text-shadow: 0 2px 6px #000; }
+#plating .pl-hint { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: max-content; max-width: 46vw; text-align: center; font-size: 15px; text-shadow: 0 2px 6px #000; }
 #plating .pl-result { position: absolute; left: 50%; top: 30%; transform: translate(-50%,-50%); text-align: center; padding: 18px 40px; animation: pl-pop .35s ease-out; }
 #plating .pl-result h1 { margin: 0; font: 700 38px Cinzel, serif; color: #ffcf6a; }
+#plating .pl-tip { position: absolute; left: 50%; bottom: 200px; transform: translateX(-50%); max-width: 560px; text-align: center; padding: 8px 18px; font-size: 17px; font-weight: 700; color: #ffe2a8; }
+#plating .pl-tip b { color: #ffcf6a; font: 700 12px Cinzel, serif; letter-spacing: .14em; display: block; margin-bottom: 2px; opacity: .85; }
+#plating .pl-fixes { margin-top: 10px; font-size: 14px; text-align: left; }
+#plating .pl-fixes div { padding: 3px 0; }
+#plating .pl-fixes div:not(.h)::before { content: '→ '; color: #ffcf6a; }
 @keyframes pl-pulse { to { opacity: .55; } }
 @keyframes pl-pop { from { transform: translate(-50%,-50%) scale(.6); opacity: 0; } }
 @media (max-width: 760px) { #plating .pl-right { display: none; } #plating .pl-title h1 { font-size: 24px; } }
@@ -70,7 +75,8 @@ export class PlatingHud {
       </div>
       <div class="pl-panel pl-right"><h2>Presentation</h2><div class="pl-meter"><i></i><s style="bottom:40%"></s><s style="bottom:60%"></s><s style="bottom:75%"></s><s style="bottom:90%"></s></div><div class="pl-grade"></div><div class="pl-score"></div></div>
       <div class="pl-hint"></div>
-      <div class="pl-panel pl-result" style="display:none"><h1></h1><div class="pl-score"></div></div>`;
+      <div class="pl-panel pl-tip"><b>Gorgon wants</b><span></span></div>
+      <div class="pl-panel pl-result" style="display:none"><h1></h1><div class="pl-score"></div><div class="pl-fixes"></div></div>`;
     document.body.appendChild(this.root);
   }
 
@@ -90,15 +96,17 @@ export class PlatingHud {
     q<HTMLElement>('.pl-right .pl-score').textContent = `${v.score} / 100`;
     for (const t of this.root.querySelectorAll<HTMLElement>('.pl-tool')) t.classList.toggle('on', t.dataset.t === v.tool);
     q<HTMLElement>('.pl-hint').textContent = v.tool === 'place' && v.holding ? 'Click to set it down. Scroll to rotate.' : TOOL_HINT[v.tool];
+    q<HTMLElement>('.pl-tip span').textContent = v.tip;
     q<HTMLElement>('.pl-result').style.display = 'none';
-    for (const s of ['.pl-title', '.pl-left', '.pl-right', '.pl-hint']) q<HTMLElement>(s).style.display = '';
+    for (const s of ['.pl-title', '.pl-left', '.pl-right', '.pl-hint', '.pl-tip']) q<HTMLElement>(s).style.display = '';
   }
 
   /** Briefly flash the plating grade after the plate is finished. */
   result(r: PlatingResult): void {
-    this.resultT = 1.8;
+    this.resultT = r.fixes.length ? 3.4 : 1.8;
     const q = <T extends Element>(s: string) => this.root.querySelector(s) as T;
-    for (const s of ['.pl-title', '.pl-left', '.pl-right', '.pl-hint']) q<HTMLElement>(s).style.display = 'none';
+    for (const s of ['.pl-title', '.pl-left', '.pl-right', '.pl-hint', '.pl-tip']) q<HTMLElement>(s).style.display = 'none';
+    q<HTMLElement>('.pl-fixes').innerHTML = r.fixes.length ? `<div class="h" style="opacity:.75;font-size:12px;letter-spacing:.1em">NEXT TIME</div>${r.fixes.map((f) => `<div>${f}</div>`).join('')}` : '';
     const box = q<HTMLElement>('.pl-result');
     box.style.display = '';
     box.querySelector('h1')!.textContent = r.grade;

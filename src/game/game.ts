@@ -7,7 +7,7 @@ import { Physics, GROUP } from '../engine/physics';
 import type { PsxRenderer } from '../engine/renderer';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Hud } from '../ui/hud';
-import { GorgonAI, type GorgonWorld, type RoundTemper } from './gorgonAI';
+import { GorgonAI, type GorgonWorld } from './gorgonAI';
 import { INGREDIENTS, ingredientMeshFactories, type IngredientKind } from './ingredients';
 import { Interaction } from './interact';
 import { Items, type Item } from './items';
@@ -15,55 +15,20 @@ import { buildKitchen, COUNTER_TOP, type Kitchen, type StationId } from './kitch
 import { pickLine, type LineKey } from './lines';
 import { Particles } from './particles';
 import { Player } from './player';
-import { evaluateDish, RECIPES, type DishResult, type Recipe } from './recipes';
+import { evaluateDish, type DishResult, type Recipe } from './recipes';
 import { Rivals } from './rivals';
 import { Stations, type PlateId, type Ticket } from './stations';
 import { buildObjectives } from './objectives';
 import { PlatingMode, type PlatingResult } from './plating';
 import { PlatingHud } from '../ui/platingHud';
 import { gradeFor } from './recipes';
+import { currentEpisode, type RoundDef } from './episodes';
+import { Hotel } from './hotel';
+import { buildHotelKitchen } from './hotelKitchen';
+import { AssemblyPreview } from './assembly';
 
-interface RoundDef {
-  name: string;
-  title: string;
-  sub: string;
-  line: LineKey;
-  seconds: number;
-  recipes: Recipe[];
-  temper: RoundTemper;
-  boss?: boolean;
-}
-
-const ROUNDS: RoundDef[] = [
-  {
-    name: 'Round 1 · The Appetizer',
-    title: 'Round 1',
-    sub: 'The Appetizer: one Cursed Caesar',
-    line: 'round1',
-    seconds: 240,
-    recipes: [RECIPES.caesar],
-    temper: { interval: 22, inspect: 1, gaze: 0.8, sabotage: 0, speed: 0.9, windup: 2.4 },
-  },
-  {
-    name: 'Round 2 · Dinner Rush',
-    title: 'Round 2',
-    sub: 'Dinner Rush: Steak & Fries AND Spaghetti',
-    line: 'round2',
-    seconds: 360,
-    recipes: [RECIPES.steakFries, RECIPES.spaghetti],
-    temper: { interval: 17, inspect: 1, gaze: 1, sabotage: 0.5, speed: 1, windup: 2.0 },
-  },
-  {
-    name: 'Round 3 · The Final Judgment',
-    title: 'The Final Judgment',
-    sub: "Cook Gorgon's signature Medusa Wellington",
-    line: 'round3',
-    seconds: 300,
-    recipes: [RECIPES.wellington],
-    temper: { interval: 16, inspect: 0.6, gaze: 1.2, sabotage: 0.35, speed: 1.15, windup: 1.8 },
-    boss: true,
-  },
-];
+const EPISODE = currentEpisode();
+const ROUNDS: RoundDef[] = EPISODE.rounds;
 
 type Phase = 'title' | 'cutscene' | 'playing' | 'dead' | 'ended';
 
@@ -84,6 +49,9 @@ export class Game {
   /** Plating scores waiting to be folded into the dish score when the plate is served. */
   private platingDone = new Map<PlateId, PlatingResult>();
   private pendingServe: PlateId[] = [];
+  /** Episode 2 set pieces (oven, trolley, toaster, desk bell, printer, Service Inspection). */
+  private hotel: Hotel | null = null;
+  private assemblyPreview!: AssemblyPreview;
 
   private phase: Phase = 'title';
   private paused = false;
@@ -114,7 +82,7 @@ export class Game {
 
   async init(): Promise<void> {
     await this.physics.init();
-    this.kitchen = buildKitchen(this.scene, this.physics, ingredientMeshFactories);
+    this.kitchen = (EPISODE.id === 2 ? buildHotelKitchen : buildKitchen)(this.scene, this.physics, ingredientMeshFactories);
     // Build every ingredient's textures and geometry up front so the first grab doesn't hitch.
     for (const def of Object.values(INGREDIENTS)) {
       def.whole();
@@ -128,11 +96,19 @@ export class Game {
     this.particles = new Particles(this.scene);
     this.items = new Items(this.scene, this.physics);
     this.items.onFloor = (it) => this.onFloor(it);
+    this.items.onSpill = (carrier, spilled) => {
+      if (this.phase !== 'playing' || spilled.length < 2) return;
+      audio.play('clang', { pos: carrier.group.position, volume: 1, pitch: 0.75 });
+      this.gorgonSay('traySpill', false, 2);
+      this.react('gasp', 1);
+    };
     this.items.onImpact = (it, s) => {
       if (it.kind === 'plate' && s > 0.3) {
         this.shatterPlate(it);
         return;
       }
+      // A loaded tray or trolley hitting hard throws everything off it.
+      if ((it.kind === 'tray' || it.kind === 'trolley') && it.carried.length && s > 0.3) this.items.spill(it, 1 + s);
       const soft = it.isIngredient;
       audio.play(soft ? (Math.random() < 0.5 ? 'squish' : 'thud') : 'clang', { pos: it.group.position, volume: 0.25 + s * 0.75, pitch: 0.85 + Math.random() * 0.3 });
       // Loud landings carry across the kitchen; a thrown item is a handy distraction.
@@ -203,7 +179,31 @@ export class Game {
         this.react('laugh', 1);
       },
       spray: (from, dir, dt) => this.spray(from, dir, dt),
+      prop: (name, held) => this.hotel?.prop(name, held) ?? false,
+      trolley: () => this.hotel?.toggleLocks(),
+      assembled: (base, done) => {
+        if (done && base.kind === 'pastry' && this.phase === 'playing') this.gorgonSay('pastryResting', false, 1);
+      },
     });
+    this.assemblyPreview = new AssemblyPreview(this.scene);
+    if (this.kitchen.hotel && this.kitchen.oven) {
+      this.hotel = new Hotel({
+        scene: this.scene,
+        kitchen: this.kitchen,
+        items: this.items,
+        stations: this.stations,
+        player: this.player,
+        gorgon: this.gorgon,
+        interact: () => this.interact,
+        say: (k, p = 1) => this.gorgonSay(k, false, p),
+        react: (k, c) => this.react(k, c),
+        addWrath: (n) => this.addWrath(n),
+        notice: (t) => this.hud.notice(t),
+        playing: () => this.phase === 'playing',
+        inspectEvery: () => (this.roundIndex >= 0 ? ROUNDS[this.roundIndex].inspectEvery : undefined),
+      });
+      this.hotel.init();
+    }
     this.plating = new PlatingMode(this.scene, this.kitchen, this.stations, this.player, (k) => this.gorgonSay(k, false, 1), () => this.wrath);
     this.hangMirrorPan();
     window.addEventListener('resize', () => {
@@ -216,7 +216,7 @@ export class Game {
 
   private hangMirrorPan(): void {
     // Fire extinguisher stands on the counter beside the stove.
-    this.items.spawn('extinguisher', new THREE.Vector3(2.7, COUNTER_TOP + 0.05, -3.6));
+    this.items.spawn('extinguisher', this.kitchen.extinguisher?.clone() ?? new THREE.Vector3(2.7, COUNTER_TOP + 0.05, -3.6));
     const pan = this.items.spawn('mirrorPan', this.kitchen.mirrorHook.clone());
     pan.setKinematic(true);
     pan.where = 'hook';
@@ -244,6 +244,8 @@ export class Game {
       inspectHeld: () => {
         const h = this.interact.held;
         if (!h) return 'empty';
+        // A loaded tray: he inspects what's on it.
+        if (h.kind === 'tray') return h.carried.some((c) => c.isIngredient && !c.cook.floor && c.cookLevel() < 1.5) ? 'good' : h.carried.length ? 'bad' : 'empty';
         if (!h.isIngredient) return 'bad';
         const c = h.cook;
         if (c.floor || h.cookLevel() > 1.5) return 'bad';
@@ -257,10 +259,14 @@ export class Game {
         const st = order.find((s) => this.stations.occupant[s].length > 0);
         if (!st) {
           const pp = this.player.position;
-          return { spot: new THREE.Vector3(pp.x, 0, Math.max(-1.9, Math.min(-0.8, pp.z + 1))), station: '' };
+          const nodes = Object.values(this.kitchen.waypoints.nodes);
+          return { spot: nodes.reduce((a, b) => (b.distanceTo(pp) < a.distanceTo(pp) ? b : a)).clone(), station: '' };
         }
         const p = this.kitchen.stations[st];
-        const spot = st.startsWith('plate') ? new THREE.Vector3(4.2, 0, p.z) : new THREE.Vector3(p.x, 0, -2.3);
+        // Stand on the walkable floor nearest the station.
+        const nodes = Object.values(this.kitchen.waypoints.nodes);
+        const near = nodes.reduce((a, b) => (b.distanceTo(p) < a.distanceTo(p) ? b : a));
+        const spot = p.clone().setY(0).lerp(near, 0.55).setY(0);
         return { spot, station: st };
       },
       doSabotage: (station, from) => {
@@ -342,13 +348,13 @@ export class Game {
     // Gorgon bursts through the doors.
     audio.play('doorSlam', { pos: this.kitchen.door.pos });
     music.sting('dread');
-    this.hud.showBanner('Hex Kitchen', 'Tonight\'s host: Gorgon Ramsey', 3.5);
-    this.player.faceTarget = new THREE.Vector3(2.3, 1.6, 1.4);
+    this.hud.showBanner(EPISODE.id === 2 ? `Episode 2 · ${EPISODE.title}` : 'Hex Kitchen', EPISODE.host, 3.5);
+    this.player.faceTarget = this.kitchen.waypoints.nodes.southE.clone().setY(1.6);
     await this.gorgon.goTo(this.kitchen.waypoints.nodes.southE, 1.1);
     this.gorgon.setScripted('armsCrossed', this.player.camera.position);
     this.gorgon.faceToward(this.player.position);
     this.player.faceTarget = this.gorgon.eye();
-    await this.wait(this.gorgon.say('intro', 3));
+    await this.wait(this.gorgon.say(EPISODE.intro, 3));
     this.player.faceTarget = null;
 
     for (let i = 0; i < ROUNDS.length; i++) {
@@ -378,6 +384,10 @@ export class Game {
     this.stations.setPlate('plateB', false);
     this.stations.assignTicket('plateA', this.tickets[0] ?? null);
     this.stations.assignTicket('plateB', this.tickets[1] ?? null);
+    if (this.hotel) {
+      this.hotel.resetRound();
+      for (let k = 0; k < this.tickets.length; k++) this.hotel.printTicket();
+    }
     this.roundTime = r.seconds;
     this.hud.showBanner(r.title, r.sub, 3.5);
     audio.play('roundStart');
@@ -453,13 +463,13 @@ export class Game {
   private async tasting(result: DishResult): Promise<void> {
     this.phase = 'cutscene';
     music.setMode('tasting');
-    this.hud.showBanner('The Tasting', 'Gorgon tastes your Medusa Wellington...', 3);
+    this.hud.showBanner('The Tasting', `Gorgon tastes your ${EPISODE.bossDish}...`, 3);
     const judge = this.kitchen.judgeSpot;
     this.player.faceTarget = judge.clone().setY(1.75);
     await this.gorgon.goTo(judge, 1.2);
-    this.gorgon.faceToward(new THREE.Vector3(3.35, 0, -1.9));
+    this.gorgon.faceToward(this.kitchen.stations.plateA.clone().setY(0));
     this.gorgon.setScripted('taste', null);
-    await this.wait(this.gorgon.say('tasteStart', 3));
+    await this.wait(this.gorgon.say(EPISODE.taste, 3));
     this.heartbeat?.setVolume(0.8);
     await this.wait(3);
     this.heartbeat?.setVolume(0);
@@ -470,12 +480,12 @@ export class Game {
       this.gorgon.setScripted('laugh', this.player.camera.position);
       music.setMode('victory');
       this.react('applause', 1);
-      await this.wait(this.gorgon.say('verdictWin', 3));
-      this.finish(true, pickLine('verdictWin'));
+      await this.wait(this.gorgon.say(EPISODE.win, 3));
+      this.finish(true, pickLine(EPISODE.win));
     } else {
       this.gorgon.setScripted('gaze', this.player.camera.position);
       this.player.faceTarget = this.gorgon.eye();
-      const d = this.gorgon.say('verdictLose', 3);
+      const d = this.gorgon.say(EPISODE.lose, 3);
       this.gorgon.glow = 1;
       audio.play('eyeGlow');
       await this.wait(Math.max(2, d - 0.5));
@@ -489,7 +499,7 @@ export class Game {
       this.react('gasp', 1);
       music.setMode('gameover');
       await this.wait(2);
-      this.finish(false, pickLine('verdictLose'));
+      this.finish(false, pickLine(EPISODE.lose));
     }
   }
 
@@ -726,6 +736,8 @@ export class Game {
     }
     this.items.update();
     this.checkTrashToss();
+    this.hotel?.update(dt);
+    this.assemblyPreview.update(dt, playing ? this.interact.held : null, this.items);
     this.updateShelf(dt, playing);
     if ((this.sprayT -= dt) <= 0 && this.sprayLoop) {
       this.sprayLoop.stop();
