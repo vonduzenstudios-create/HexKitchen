@@ -27,7 +27,7 @@ export interface Kitchen {
   rivalSpots: THREE.Vector3[];
   statueSpots: THREE.Vector3[];
   door: { left: THREE.Object3D; right: THREE.Object3D; pos: THREE.Vector3 };
-  lights: { fluoro: THREE.PointLight[]; tubes: THREE.Mesh[]; pass: THREE.PointLight };
+  lights: { fluoro: THREE.SpotLight[]; tubes: THREE.Mesh[]; pass: THREE.PointLight };
   waypoints: Waypoints;
   /** Flicker the fluorescents; dread 0..1 dims the room. */
   update(t: number, dread: number): void;
@@ -78,14 +78,14 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
   wallTex.needsUpdate = true;
   const steelTex = tex.steel();
 
-  const mFloor = mat(0xffffff, { map: floorTex });
+  const mFloor = mat(0xffffff, { map: floorTex, roughness: 0.45 });
   const mWall = mat(0xffffff, { map: wallTex });
   const ceilTex = tex.ceiling().clone();
   ceilTex.repeat.set(8, 6);
   ceilTex.needsUpdate = true;
   const mCeil = mat(0xb0a898, { map: ceilTex });
-  const mSteel = mat(0xd0d4d8, { map: steelTex });
-  const mCabinet = mat(0x6c6f72, { map: steelTex });
+  const mSteel = mat(0xd0d4d8, { map: steelTex, roughness: 0.3, metalness: 0.6 });
+  const mCabinet = mat(0x9a9ea2, { map: steelTex, roughness: 0.45, metalness: 0.45 });
   const mDark = mat(0x1e1e22);
   const mWood = mat(0xffffff, { map: tex.wood() });
 
@@ -323,8 +323,8 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
   root.add(board);
 
   // Lighting: dim ambient, flickering fluorescents, warm spotlight on the pass.
-  scene.add(new THREE.HemisphereLight(0x8a90a0, 0x2a2018, 0.55));
-  const fluoro: THREE.PointLight[] = [];
+  scene.add(new THREE.HemisphereLight(0x8a90a0, 0x2a2018, 0.45));
+  const fluoro: THREE.SpotLight[] = [];
   const tubes: THREE.Mesh[] = [];
   const tubeMat = () => basic(0xf2f6e0);
   for (const [x, z] of [
@@ -333,25 +333,35 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
     [-1.5, 2.2],
     [3.5, 1.5],
   ]) {
-    const l = new THREE.PointLight(0xf0f4d8, 9, 9, 1.6);
-    l.position.set(x, 2.9, z);
-    scene.add(l);
+    // Shop lights are wide shadow-casting spots hanging just under the tubes.
+    const l = new THREE.SpotLight(0xf0f4d8, 16, 11, 1.25, 0.85, 1.6);
+    l.position.set(x, H - 0.47, z);
+    l.target.position.set(x, 0, z);
+    l.castShadow = true;
+    l.shadow.mapSize.set(1024, 1024);
+    l.shadow.bias = -0.0004;
+    l.shadow.normalBias = 0.02;
+    l.shadow.camera.near = 0.2;
+    l.shadow.camera.far = 11;
+    scene.add(l, l.target);
     fluoro.push(l);
     const tube = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.06, 0.2), tubeMat());
     // Hanging chains for the shop lights.
     for (const cx of [-0.6, 0.6]) {
       const chain = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.36, 0.015), mDark);
+      chain.userData.noShadow = true;
       chain.position.set(x + cx, H - 0.24, z);
       root.add(chain);
     }
     tube.position.set(x, H - 0.42, z);
+    tube.userData.noShadow = true;
     root.add(tube);
     tubes.push(tube);
   }
   const passLight = new THREE.PointLight(0xffb060, 2.6, 3.5, 1.6);
   passLight.position.set(3.35, 1.6, -1.9);
   scene.add(passLight);
-  scene.fog = new THREE.Fog(0x0b0a08, 5, 15);
+  scene.fog = new THREE.Fog(0x0b0a08, 9, 24);
   scene.background = new THREE.Color(0x0b0a08);
 
   const waypoints: Waypoints = {
@@ -407,7 +417,7 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
         // Occasional stutters; more often as dread rises.
         const s = Math.sin(t * (7 + i * 3.1)) * Math.sin(t * (1.3 + i));
         if (s > 0.97 - dread * 0.25) on = 0.15;
-        l.intensity = (9 - dread * 4) * on;
+        l.intensity = (16 - dread * 7) * on;
         (tubes[i].material as THREE.MeshBasicMaterial).color.setScalar(0.35 + 0.6 * on);
       });
       passLight.intensity = 2.6 + Math.sin(t * 3) * 0.15;

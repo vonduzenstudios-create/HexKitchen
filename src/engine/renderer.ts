@@ -1,13 +1,12 @@
 import * as THREE from 'three';
-import { psxUniforms } from './psx';
 
 const POST_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
 `;
 
-// Colour depth reduction with ordered dithering, vignette, plus gameplay overlays:
-// petrification (grey creeping in from the edges with cracks), red damage flash and eye-glow tint.
+// Final pass: gameplay overlays (petrification creeping in from the edges, red damage flash,
+// eye-glow tint), vignette, ACES tone mapping and sRGB output.
 const POST_FRAG = /* glsl */ `
 precision highp float;
 uniform sampler2D tScene;
@@ -19,14 +18,6 @@ uniform float uTime;
 uniform float uFade;
 varying vec2 vUv;
 
-float bayer4(vec2 p) {
-  int x = int(mod(p.x, 4.0));
-  int y = int(mod(p.y, 4.0));
-  int i = x + y * 4;
-  float m[16] = float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
-  for (int k = 0; k < 16; k++) { if (k == i) return m[k] / 16.0; }
-  return 0.0;
-}
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p) {
   vec2 i = floor(p); vec2 f = fract(p);
@@ -37,37 +28,38 @@ float noise(vec2 p) {
 
 void main() {
   vec3 col = texture2D(tScene, vUv).rgb;
-  vec2 px = vUv * uRes;
-
-  // Petrification: stone creeps from the screen edges toward the centre.
   vec2 c = vUv - 0.5;
   float edge = length(c * vec2(1.3, 1.0)) * 1.6;
+
+  // Petrification: stone creeps from the screen edges toward the centre.
   float n = noise(vUv * 9.0) * 0.35;
   float stoneMask = smoothstep(1.15 - uStone * 1.25, 1.25 - uStone * 1.25, edge + n);
   float grey = dot(col, vec3(0.3, 0.59, 0.11));
-  vec3 stone = vec3(grey * 0.7 + 0.18) * vec3(0.95, 0.93, 0.88);
-  float crack = smoothstep(0.02, 0.0, abs(noise(vUv * 22.0 + 3.0) - 0.5)) * step(0.5, uStone);
+  vec3 stone = vec3(grey * 0.7 + 0.06) * vec3(0.95, 0.93, 0.88);
+  float crack = smoothstep(0.004, 0.0, abs(noise(vUv * 22.0 + 3.0) - 0.5)) * step(0.5, uStone);
   stone *= 1.0 - crack * 0.6;
   col = mix(col, stone, stoneMask * min(1.0, uStone * 1.4));
   col = mix(col, vec3(grey), uStone * 0.35);
 
   // Eye-glow: sickly green wash while Gorgon's gaze is charging.
-  col += vec3(0.25, 0.4, 0.05) * uGlow * (0.4 + 0.6 * edge);
+  col += vec3(0.08, 0.16, 0.01) * uGlow * (0.4 + 0.6 * edge);
   // Damage flash.
-  col = mix(col, vec3(0.9, 0.1, 0.05), uFlash * 0.45);
+  col = mix(col, vec3(0.8, 0.02, 0.01), uFlash * 0.45);
 
   // Vignette.
-  col *= 1.0 - smoothstep(0.45, 0.95, length(c)) * 0.55;
-
-  // 5-bit colour with Bayer dithering.
-  float levels = 31.0;
-  float d = bayer4(px) - 0.5;
-  col = floor(col * levels + 0.5 + d) / levels;
-
+  col *= 1.0 - smoothstep(0.5, 1.0, length(c)) * 0.45;
   col *= 1.0 - uFade;
+
   gl_FragColor = vec4(col, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  // A touch of film grain after tone mapping, to break up banding in the dark basement.
+  gl_FragColor.rgb += (hash(vUv * uRes + fract(uTime) * 61.0) - 0.5) * 0.025;
 }
 `;
+
+/** `?gfx=low` turns off shadows and multisampling for weak GPUs (and headless tests). */
+export const LOW_GFX = new URLSearchParams(location.search).get('gfx') === 'low';
 
 export class PsxRenderer {
   readonly gl: THREE.WebGLRenderer;
@@ -75,21 +67,21 @@ export class PsxRenderer {
   private postScene = new THREE.Scene();
   private postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private postMat: THREE.ShaderMaterial;
-  /** Virtual resolution height; width follows the window aspect. */
-  readonly virtualHeight = 240;
 
   constructor(container: HTMLElement) {
     this.gl = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-    this.gl.setPixelRatio(1);
-    // Colours are authored as final display values (no linear workflow), like the PS1 did.
-    THREE.ColorManagement.enabled = false;
-    this.gl.outputColorSpace = THREE.LinearSRGBColorSpace;
+    this.gl.setPixelRatio(LOW_GFX ? 0.75 : Math.min(window.devicePixelRatio, 1.5));
+    this.gl.outputColorSpace = THREE.SRGBColorSpace;
+    this.gl.toneMapping = THREE.ACESFilmicToneMapping;
+    this.gl.toneMappingExposure = 0.85;
+    this.gl.shadowMap.enabled = !LOW_GFX;
+    this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.gl.domElement);
-    this.gl.domElement.style.imageRendering = 'pixelated';
 
+    // The scene renders into a multisampled HDR target, then the post pass tone maps it to the screen.
     this.target = new THREE.WebGLRenderTarget(320, 240, {
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
+      type: THREE.HalfFloatType,
+      samples: LOW_GFX ? 0 : 4,
       depthBuffer: true,
     });
     this.postMat = new THREE.ShaderMaterial({
@@ -106,6 +98,7 @@ export class PsxRenderer {
       },
       depthTest: false,
       depthWrite: false,
+      toneMapped: true,
     });
     this.postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.postMat));
     window.addEventListener('resize', () => this.resize());
@@ -137,11 +130,11 @@ export class PsxRenderer {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.gl.setSize(w, h, true);
-    const vh = this.virtualHeight;
-    const vw = Math.round(vh * (w / Math.max(1, h)));
+    const pr = this.gl.getPixelRatio();
+    const vw = Math.round(w * pr);
+    const vh = Math.round(h * pr);
     this.target.setSize(vw, vh);
     this.postMat.uniforms.uRes.value.set(vw, vh);
-    psxUniforms.uSnap.value.set(vw, vh);
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera, time: number): void {

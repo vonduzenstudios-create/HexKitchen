@@ -197,11 +197,11 @@ export class Hud {
       <h1 class="logo display">Hex Kitchen<span>a cooking horror comedy</span></h1>
       <p class="tagline">Three rounds. One furious gorgon chef. Don't meet his eyes.</p>
       <div class="controls">
-        <b>WASD</b><span>Move  ·  Mouse: look</span>
+        <b>WASD</b><span>Move  ·  Shift: sprint  ·  Mouse: look</span>
         <b>Click</b><span>Grab / place / drop  ·  flick while dropping to throw</span>
         <b>Hold click</b><span>Work a station: swipe to chop, shake to season, flick to flip</span>
         <b>Right click</b><span>Raise the polished pan to reflect his gaze</span>
-        <b>Space</b><span>Crouch behind counters for cover</span>
+        <b>Space / C</b><span>Crouch behind counters for cover</span>
         <b>E</b><span>Serve the plate you're looking at (or ring the bell)</span>
       </div>
       <button class="btn" id="start">ENTER THE KITCHEN</button>

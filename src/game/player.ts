@@ -82,7 +82,8 @@ export class Player {
       this.pitch = Math.max(-1.45, Math.min(1.35, this.pitch));
     }
 
-    const wantCrouch = this.moveEnabled && (input.keys.has('Space') || input.keys.has('ControlLeft') || input.keys.has('KeyC'));
+    // Ctrl is deliberately not a crouch key: Ctrl+W closes the browser tab and can't be blocked.
+    const wantCrouch = this.moveEnabled && (input.keys.has('Space') || input.keys.has('KeyC'));
     this.crouch += ((wantCrouch ? 1 : 0) - this.crouch) * Math.min(1, dt * 10);
 
     const move = new THREE.Vector3();

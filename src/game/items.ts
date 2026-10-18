@@ -48,6 +48,8 @@ export class Item {
   collider: RAPIER.Collider;
   cook: CookState = freshCookState();
   where: ItemWhere = 'world';
+  /** Knocked about by Gorgon: landing on the floor afterwards doesn't count as the player's fault. */
+  sabotaged = false;
   station: StationId | null = null;
   /** Small per-item state used by stations (e.g. pan flip animation). */
   anim = { flip: 0, flipSide: 0 };
@@ -131,7 +133,7 @@ export class Item {
     const cooked = new THREE.Color(INGREDIENTS[this.kind].cooked);
     const lvl = this.cookLevel();
     for (const m of this.tints) {
-      const mm = m.material as THREE.MeshLambertMaterial;
+      const mm = m.material as THREE.MeshStandardMaterial;
       if (!m.userData.baseColor) m.userData.baseColor = mm.color.clone();
       const base = m.userData.baseColor as THREE.Color;
       mm.color.copy(base).lerp(cooked, Math.min(1, lvl));
@@ -206,7 +208,8 @@ export class Items {
       if (it.lastVy < -1.3 && Math.abs(v.y) < Math.abs(it.lastVy) * 0.4) this.onImpact(it, Math.min(1, -it.lastVy / 5));
       it.lastVy = v.y;
       const speed = Math.hypot(v.x, v.y, v.z);
-      if (t.y < 0.14 && speed < 0.6 && it.isIngredient && !it.cook.floor) {
+      if (t.y > 0.6 && speed < 0.2) it.sabotaged = false;
+      if (t.y < 0.14 && speed < 0.6 && it.isIngredient && !it.cook.floor && !it.sabotaged) {
         it.cook.floor = true;
         this.onFloor(it);
       }

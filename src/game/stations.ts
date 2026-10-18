@@ -225,6 +225,21 @@ export class Stations {
   }
 
   /** Gorgon's sabotage: knock everything off a station with an impulse. */
+  /** Sabotage: slide one item along the counter away from Gorgon. It stays on the counter and clean. */
+  shove(id: StationId, from: THREE.Vector3): Item | null {
+    const it = this.occupant[id][0];
+    if (!it) return null;
+    this.take(it);
+    it.setKinematic(false);
+    it.sabotaged = true;
+    const dir = it.group.position.clone().sub(from).setY(0).normalize();
+    // Push mostly sideways along the counter (x), barely toward the wall, with a small hop.
+    const side = Math.sign(dir.x || Math.random() - 0.5);
+    it.body.setLinvel({ x: side * (1.2 + Math.random() * 0.4), y: 1.2, z: -0.3 }, true);
+    it.body.setAngvel({ x: Math.random() * 4, y: Math.random() * 6, z: Math.random() * 4 }, true);
+    return it;
+  }
+
   knock(id: StationId, from: THREE.Vector3): Item[] {
     const knocked = this.occupant[id].slice();
     for (const it of knocked) {

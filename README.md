@@ -23,7 +23,7 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 | Click | Grab, place, or drop. Flick the mouse while dropping to throw |
 | Hold click on a station | Work it: swipe down on the beat to chop, shake left-right to season, flick up to flip |
 | Right click | Raise the polished pan (hanging by the cutting board) to reflect Gorgon's gaze |
-| Space | Crouch behind counters for cover |
+| Space or C | Crouch behind counters for cover |
 | E | Serve the plate you're looking at, or every plate when near the pass |
 | Q | Drop what you're holding |
 
@@ -47,7 +47,7 @@ Gorgon can use a designed AI chef voice (not a clone of anyone) from ElevenLabs 
 
 ## Tech
 
-- [three.js](https://threejs.org/) rendering with a PS1-style pipeline: 240p render target, vertex snapping, 5-bit colour with ordered dithering, fog
+- [three.js](https://threejs.org/) rendering with physically based materials, soft shadows from the shop lights, image-based reflections, multisampled HDR and ACES tone mapping. Add `?gfx=low` to the URL to turn off shadows and multisampling on weak GPUs
 - [Rapier](https://rapier.rs/) physics for every ingredient and the player controller
 - Web Audio API for everything you hear: synthesized SFX, a procedural step-sequencer soundtrack, and a formant speech synthesizer for Gorgon's voice
 - Vite + TypeScript

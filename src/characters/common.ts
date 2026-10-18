@@ -22,17 +22,21 @@ export function charTexture(
   w: number,
   h: number,
   paint: (g: CanvasRenderingContext2D, w: number, h: number) => void,
-  nearest = true,
+  nearest = false,
 ): THREE.CanvasTexture {
+  // Painters work in their own small pixel grid; draw them 4x larger so vector shapes come out crisp.
+  const S = nearest ? 1 : 4;
   const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
+  c.width = w * S;
+  c.height = h * S;
   const g = c.getContext('2d')!;
+  g.scale(S, S);
   paint(g, w, h);
   const t = new THREE.CanvasTexture(c);
   t.magFilter = nearest ? THREE.NearestFilter : THREE.LinearFilter;
-  t.minFilter = nearest ? THREE.NearestFilter : THREE.LinearFilter;
-  t.generateMipmaps = false;
+  t.minFilter = nearest ? THREE.NearestFilter : THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = !nearest;
+  t.anisotropy = 8;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
@@ -98,7 +102,7 @@ export function stoneTexture(cracked: boolean): THREE.CanvasTexture {
 
 export const STONE_COLOR = new THREE.Color(0x8e8b85);
 
-type ColorMat = THREE.MeshLambertMaterial | THREE.MeshBasicMaterial;
+type ColorMat = THREE.MeshStandardMaterial | THREE.MeshBasicMaterial;
 
 interface StoneEntry {
   m: ColorMat;
@@ -113,13 +117,13 @@ export class Petrifier {
   value = 0;
 
   add(m: THREE.Material): void {
-    if (!(m instanceof THREE.MeshLambertMaterial || m instanceof THREE.MeshBasicMaterial)) return;
+    if (!(m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshBasicMaterial)) return;
     if (this.entries.some((e) => e.m === m)) return;
     this.entries.push({
       m,
       color: m.color.clone(),
       map: m.map,
-      emissive: m instanceof THREE.MeshLambertMaterial ? m.emissive.clone() : null,
+      emissive: m instanceof THREE.MeshStandardMaterial ? m.emissive.clone() : null,
     });
   }
 
@@ -149,7 +153,7 @@ export class Petrifier {
 
 function applyStone(e: StoneEntry, v: number, crackV: number): void {
   e.m.color.copy(e.color).lerp(STONE_COLOR, v);
-  if (e.emissive && e.m instanceof THREE.MeshLambertMaterial) e.m.emissive.copy(e.emissive).multiplyScalar(1 - v);
+  if (e.emissive && e.m instanceof THREE.MeshStandardMaterial) e.m.emissive.copy(e.emissive).multiplyScalar(1 - v);
   const want = v < 0.5 ? e.map : crackV >= 0.98 ? stoneTexture(true) : stoneTexture(false);
   if (e.m.map !== want) {
     if (!e.m.map !== !want) e.m.needsUpdate = true;
@@ -161,13 +165,13 @@ function applyStone(e: StoneEntry, v: number, crackV: number): void {
 export class CreepingStone {
   private entries: (StoneEntry & { d: number })[] = [];
   add(m: THREE.Material, d: number): void {
-    if (!(m instanceof THREE.MeshLambertMaterial || m instanceof THREE.MeshBasicMaterial)) return;
+    if (!(m instanceof THREE.MeshStandardMaterial || m instanceof THREE.MeshBasicMaterial)) return;
     this.entries.push({
       m,
       d,
       color: m.color.clone(),
       map: m.map,
-      emissive: m instanceof THREE.MeshLambertMaterial ? m.emissive.clone() : null,
+      emissive: m instanceof THREE.MeshStandardMaterial ? m.emissive.clone() : null,
     });
   }
   set(v: number): void {
@@ -429,6 +433,6 @@ export function gaitPose(p: number, amp = 1): JointPose {
   };
 }
 
-export function skinMat(color: THREE.ColorRepresentation, map?: THREE.Texture): THREE.MeshLambertMaterial {
+export function skinMat(color: THREE.ColorRepresentation, map?: THREE.Texture): THREE.MeshStandardMaterial {
   return mat(color, { map: map ?? null });
 }

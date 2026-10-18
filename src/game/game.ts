@@ -5,6 +5,7 @@ import { buildHands, type HandsRig } from '../characters/hands';
 import type { Input } from '../engine/input';
 import { Physics, GROUP } from '../engine/physics';
 import type { PsxRenderer } from '../engine/renderer';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Hud } from '../ui/hud';
 import { GorgonAI, type GorgonWorld, type RoundTemper } from './gorgonAI';
 import { ingredientMeshFactories } from './ingredients';
@@ -47,7 +48,7 @@ const ROUNDS: RoundDef[] = [
     line: 'round2',
     seconds: 360,
     recipes: [RECIPES.steakFries, RECIPES.spaghetti],
-    temper: { interval: 15, inspect: 1, gaze: 1, sabotage: 0.8, speed: 1, windup: 2.0 },
+    temper: { interval: 17, inspect: 1, gaze: 1, sabotage: 0.5, speed: 1, windup: 2.0 },
   },
   {
     name: 'Round 3 · The Final Judgment',
@@ -56,7 +57,7 @@ const ROUNDS: RoundDef[] = [
     line: 'round3',
     seconds: 300,
     recipes: [RECIPES.wellington],
-    temper: { interval: 10, inspect: 0.4, gaze: 1.4, sabotage: 1, speed: 1.25, windup: 1.6 },
+    temper: { interval: 16, inspect: 0.6, gaze: 1.2, sabotage: 0.35, speed: 1.15, windup: 1.8 },
     boss: true,
   },
 ];
@@ -106,6 +107,11 @@ export class Game {
   async init(): Promise<void> {
     await this.physics.init();
     this.kitchen = buildKitchen(this.scene, this.physics, ingredientMeshFactories);
+    // Soft image-based reflections so steel, sauces and Gorgon's eyes catch the light.
+    const pmrem = new THREE.PMREMGenerator(this.renderer.gl);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.3;
+    pmrem.dispose();
     this.particles = new Particles(this.scene);
     this.items = new Items(this.scene, this.physics);
     this.items.onFloor = (it) => this.onFloor(it);
@@ -200,7 +206,8 @@ export class Game {
         return 'good';
       },
       sabotageTarget: () => {
-        const order: StationId[] = this.wrath > 55 ? ['plateA', 'plateB', 'pan', 'board', 'prep'] : ['board', 'prep', 'pan', 'plateA', 'plateB'];
+        // Plated food is off limits: losing a finished dish feels unfair.
+        const order: StationId[] = ['board', 'prep', 'pan'];
         const st = order.find((s) => this.stations.occupant[s].length > 0);
         if (!st) {
           const pp = this.player.position;
@@ -215,16 +222,7 @@ export class Game {
         const st = station as StationId;
         const items = this.stations.occupant[st];
         if (!items.length) return 'slam';
-        if (st.startsWith('plate') && Math.random() < 0.55) {
-          for (const it of items.slice()) {
-            this.stations.take(it);
-            this.particles.emit(it.group.position, { color: 0x888888, count: 10, up: 1, speed: 0.6, gravity: 5, life: 0.8 });
-            this.items.remove(it);
-          }
-          this.react('gasp', 1);
-          return 'bin';
-        }
-        this.stations.knock(st, from);
+        this.stations.shove(st, from);
         this.react('laugh', 0.6);
         return 'knock';
       },
@@ -545,6 +543,10 @@ export class Game {
     this.renderer.stone = this.stoneVisual;
     this.renderer.flash = this.flash;
     this.renderer.glow = this.gorgon.glow * 0.3;
+    if ((this.shadowScan -= dt) <= 0) {
+      this.shadowScan = 0.5;
+      this.updateShadowFlags();
+    }
     this.renderer.render(this.scene, this.player.camera, this.time);
     this.input.endFrame();
   }
@@ -622,6 +624,21 @@ export class Game {
     this.hud.setPrompt(this.interact.prompt, !!tgt);
     const gaugeStation = this.interact.working ?? (tgt?.type === 'station' ? tgt.id : tgt?.type === 'item' ? tgt.station : null);
     this.hud.setGauge(playing && gaugeStation ? this.stations.gauge(gaugeStation) : null);
+  }
+
+  private shadowScan = 0;
+
+  /** Opaque lit meshes cast and receive shadows; glows, particles and flagged props don't. */
+  private updateShadowFlags(): void {
+    this.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.shadowSet) return;
+      m.userData.shadowSet = true;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      const lit = mats.every((x) => (x as THREE.MeshStandardMaterial).isMeshStandardMaterial && !x.transparent);
+      m.receiveShadow = lit;
+      m.castShadow = lit && !m.userData.noShadow;
+    });
   }
 
   private checkThrownAtGorgon(): void {

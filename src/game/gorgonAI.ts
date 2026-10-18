@@ -65,6 +65,7 @@ export class GorgonAI {
   private exposure = 0;
   private gazeFlags = { caught: false, mistimed: false, reflected: false };
   private sabotageStation = '';
+  private lastSabotage = -999;
   private speakingUntil = 0;
   private clock = 0;
   private hissT = 4;
@@ -208,7 +209,8 @@ export class GorgonAI {
     const options: [GorgonState, number][] = [
       ['toInspect', t.inspect],
       ['gazeWindup', t.gaze * (0.7 + w)],
-      ['toSabotage', t.sabotage * (0.5 + w)],
+      // At most one sabotage every 40 seconds.
+      ['toSabotage', this.clock - this.lastSabotage < 40 ? 0 : t.sabotage * (0.5 + w)],
     ];
     const total = options.reduce((a, o) => a + o[1], 0);
     let r = Math.random() * total;
@@ -244,6 +246,7 @@ export class GorgonAI {
         return;
       }
       this.sabotageStation = target.station;
+      this.lastSabotage = this.clock;
       this.set('toSabotage');
       this.walkTo(target.spot, 1.4 * t.speed, () => this.set('sabotage'));
     }

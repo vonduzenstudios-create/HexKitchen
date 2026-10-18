@@ -12,25 +12,55 @@ function rng(seed: number): () => number {
   };
 }
 
-export function canvasTexture(w: number, h: number, paint: Painter, repeat = 1): THREE.CanvasTexture {
+/** Supersampling factor: painters draw in a small logical grid, rendered at S times the resolution. */
+const S = 4;
+
+/** Fine per-pixel grain so upscaled painters still show surface detail up close. */
+function grain(g: CanvasRenderingContext2D, w: number, h: number, amount: number): void {
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  let s = 12345;
+  for (let i = 0; i < d.length; i += 4) {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    const n = ((s / 4294967296) - 0.5) * amount;
+    d[i] += n;
+    d[i + 1] += n;
+    d[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+}
+
+export function canvasTexture(w: number, h: number, paint: Painter, repeat = 1, grainAmount = 14): THREE.CanvasTexture {
   const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
+  c.width = w * S;
+  c.height = h * S;
   const g = c.getContext('2d')!;
+  g.imageSmoothingEnabled = true;
+  g.scale(S, S);
   paint(g, w, h);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  if (grainAmount > 0) grain(g, c.width, c.height, grainAmount);
   const t = new THREE.CanvasTexture(c);
-  t.magFilter = THREE.NearestFilter;
-  t.minFilter = THREE.NearestFilter;
-  t.generateMipmaps = false;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = 8;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(repeat, repeat);
   return t;
 }
 
+/** Soft round flecks of grime, varied in size so they read as organic rather than pixels. */
 function speckle(g: CanvasRenderingContext2D, w: number, h: number, n: number, color: string, seed: number, size = 1): void {
   const r = rng(seed);
   g.fillStyle = color;
-  for (let i = 0; i < n; i++) g.fillRect(Math.floor(r() * w), Math.floor(r() * h), size, size);
+  for (let i = 0; i < n; i++) {
+    const rad = size * (0.2 + r() * 0.45);
+    g.beginPath();
+    g.ellipse(r() * w, r() * h, rad, rad * (0.6 + r() * 0.4), r() * Math.PI, 0, Math.PI * 2);
+    g.fill();
+  }
 }
 
 const cache = new Map<string, THREE.CanvasTexture>();
@@ -78,19 +108,22 @@ export const tex = {
         for (let i = 0; i < 60; i++) {
           const v = 150 + r() * 30;
           g.fillStyle = `rgba(${v},${v - 6},${v - 18},0.25)`;
-          g.fillRect(Math.floor(r() * w), Math.floor(r() * h), 4 + Math.floor(r() * 10), 3 + Math.floor(r() * 8));
+          g.beginPath();
+          g.ellipse(r() * w, r() * h, 2 + r() * 6, 2 + r() * 4, r() * Math.PI, 0, Math.PI * 2);
+          g.fill();
         }
         // Taped seams with screw dimples.
         g.fillStyle = 'rgba(200,196,182,0.6)';
         g.fillRect(31, 0, 3, h);
         g.fillStyle = 'rgba(60,50,35,0.35)';
         g.fillRect(32, 0, 1, h);
-        g.fillStyle = 'rgba(70,60,45,0.5)';
+        g.fillStyle = 'rgba(70,60,45,0.35)';
         for (let y = 4; y < h; y += 10) {
-          g.fillRect(2, y, 1, 1);
-          g.fillRect(29, y + 3, 1, 1);
-          g.fillRect(36, y, 1, 1);
-          g.fillRect(61, y + 3, 1, 1);
+          for (const [x, dy] of [[2.5, 0], [29.5, 3], [36.5, 0], [61.5, 3]]) {
+            g.beginPath();
+            g.arc(x, y + dy, 0.35, 0, Math.PI * 2);
+            g.fill();
+          }
         }
         // Water stains bleeding down from the top.
         for (let i = 0; i < 3; i++) {
@@ -108,7 +141,7 @@ export const tex = {
         base.addColorStop(1, 'rgba(40,45,25,0)');
         g.fillStyle = base;
         g.fillRect(0, 0, w, h);
-        speckle(g, w, h, 70, 'rgba(50,40,25,0.35)', 43);
+        speckle(g, w, h, 30, 'rgba(50,40,25,0.18)', 43);
         // Scuffs and a dent.
         g.strokeStyle = 'rgba(40,35,30,0.4)';
         for (let i = 0; i < 4; i++) {
@@ -126,13 +159,15 @@ export const tex = {
     cached('steel', () =>
       canvasTexture(32, 32, (g, w, h) => {
         const r = rng(5);
-        for (let y = 0; y < h; y++) {
-          const v = 150 + r() * 40;
-          g.fillStyle = `rgb(${v},${v + 3},${v + 8})`;
-          g.fillRect(0, y, w, 1);
+        g.fillStyle = 'rgb(168,171,176)';
+        g.fillRect(0, 0, w, h);
+        // Fine brushed grain: many hairline strokes of slightly varying brightness.
+        for (let y = 0; y < h; y += 0.25) {
+          const v = 155 + r() * 30;
+          g.fillStyle = `rgba(${v},${v + 3},${v + 8},0.5)`;
+          g.fillRect(0, y, w, 0.25);
         }
-        speckle(g, w, h, 20, 'rgba(255,255,255,0.4)', 9);
-        speckle(g, w, h, 14, 'rgba(40,30,20,0.35)', 13);
+        speckle(g, w, h, 10, 'rgba(40,30,20,0.25)', 13);
       }),
     ),
   /** Butcher-block wood. */
@@ -225,7 +260,7 @@ export const tex = {
       g.fillText(text, w / 2, h / 2 + 1);
       g.strokeStyle = fg;
       g.strokeRect(1.5, 1.5, w - 3, h - 3);
-    }),
+    }, 1, 0),
   /** Food surface noise: blotches of a darker shade over a base. */
   food: (base: string, blotch: string, seed: number) =>
     cached(`food-${base}-${blotch}-${seed}`, () =>

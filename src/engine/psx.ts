@@ -1,29 +1,15 @@
 import * as THREE from 'three';
 
-// Colours are authored as final display values (no linear workflow), like the PS1 did.
-THREE.ColorManagement.enabled = false;
+// Colours are authored as sRGB hex values; three converts them to linear for lighting.
+THREE.ColorManagement.enabled = true;
 
-// Shared uniform so every PSX material snaps vertices to the same virtual screen grid.
+/** Kept for API compatibility with the old PS1 pipeline; vertex snapping is gone. */
 export const psxUniforms = {
-  uSnap: { value: new THREE.Vector2(160, 120) },
+  uSnap: { value: new THREE.Vector2(0, 0) },
 };
 
-/** Patch a built-in material so its vertices snap to a coarse grid, giving the PS1 wobble. */
+/** No-op now that the game renders without PS1 vertex snapping. */
 export function psxify<T extends THREE.Material>(m: T): T {
-  m.onBeforeCompile = (shader) => {
-    shader.uniforms.uSnap = psxUniforms.uSnap;
-    shader.vertexShader =
-      'uniform vec2 uSnap;\n' +
-      shader.vertexShader.replace(
-        '#include <project_vertex>',
-        `#include <project_vertex>
-        vec4 psxPos = gl_Position;
-        psxPos.xyz /= psxPos.w;
-        psxPos.xy = floor(psxPos.xy * uSnap + 0.5) / uSnap;
-        psxPos.xyz *= psxPos.w;
-        gl_Position = psxPos;`,
-      );
-  };
   return m;
 }
 
@@ -34,38 +20,38 @@ export interface MatOptions {
   transparent?: boolean;
   opacity?: number;
   side?: THREE.Side;
+  roughness?: number;
+  metalness?: number;
+  flatShading?: boolean;
 }
 
-/** Flat-shaded Lambert material with vertex snapping. The default material for everything in the game. */
-export function mat(color: THREE.ColorRepresentation, opts: MatOptions = {}): THREE.MeshLambertMaterial {
-  return psxify(
-    new THREE.MeshLambertMaterial({
-      color,
-      flatShading: true,
-      map: opts.map ?? null,
-      emissive: opts.emissive ?? 0x000000,
-      emissiveIntensity: opts.emissiveIntensity ?? 1,
-      transparent: opts.transparent ?? false,
-      opacity: opts.opacity ?? 1,
-      side: opts.side ?? THREE.FrontSide,
-    }),
-  );
+/** Physically based material. The default material for everything in the game. */
+export function mat(color: THREE.ColorRepresentation, opts: MatOptions = {}): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color,
+    map: opts.map ?? null,
+    emissive: opts.emissive ?? 0x000000,
+    emissiveIntensity: opts.emissiveIntensity ?? 1,
+    transparent: opts.transparent ?? false,
+    opacity: opts.opacity ?? 1,
+    side: opts.side ?? THREE.FrontSide,
+    roughness: opts.roughness ?? 0.75,
+    metalness: opts.metalness ?? 0,
+    flatShading: opts.flatShading ?? false,
+  });
 }
 
-/** Unlit material for glows, UI-ish world elements and particles. */
+/** Unlit material for glows, signs and particles. */
 export function basic(color: THREE.ColorRepresentation, opts: MatOptions = {}): THREE.MeshBasicMaterial {
-  return psxify(
-    new THREE.MeshBasicMaterial({
-      color,
-      map: opts.map ?? null,
-      transparent: opts.transparent ?? false,
-      opacity: opts.opacity ?? 1,
-      side: opts.side ?? THREE.FrontSide,
-    }),
-  );
+  return new THREE.MeshBasicMaterial({
+    color,
+    map: opts.map ?? null,
+    transparent: opts.transparent ?? false,
+    opacity: opts.opacity ?? 1,
+    side: opts.side ?? THREE.FrontSide,
+  });
 }
 
-/** Convenience: a mesh with shadows off (we fake lighting with flat shading and fog). */
 export function mesh(geo: THREE.BufferGeometry, material: THREE.Material): THREE.Mesh {
   return new THREE.Mesh(geo, material);
 }

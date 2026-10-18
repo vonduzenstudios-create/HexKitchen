@@ -17,6 +17,8 @@ export class Input {
 
   constructor(private el: HTMLElement) {
     window.addEventListener('keydown', (e) => {
+      // Swallow browser shortcuts (save, bookmark, find...) while playing so they don't steal focus.
+      if (this.locked && (e.ctrlKey || e.metaKey)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
       this.pressed.add(e.code);
