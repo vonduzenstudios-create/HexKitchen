@@ -891,6 +891,8 @@ export function buildHotelKitchen(scene: THREE.Scene, physics: Physics, ingredie
     }
     for (const z of [-3.85, -3.07]) box(g, null, [X, RACK_Y - 0.005, z], [0.96, 0.01, 0.01], mChrome);
     physics.addBox({ x: X, y: RACK_Y - 0.01, z: -3.46 }, { x: 0.96, y: 0.02, z: 0.84 });
+    // Invisible pane over the oven mouth so loose food can't be thrown or knocked into the chamber.
+    physics.addBox({ x: X, y: 0.9, z: ZF - 0.03 }, { x: 1.0, y: 0.7, z: 0.04 });
     // Interior bulb + light.
     const bulbMat = basic(0x3a3020);
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 8), bulbMat);
@@ -937,6 +939,12 @@ export function buildHotelKitchen(scene: THREE.Scene, physics: Physics, ingredie
       door.add(so);
     }
     g.add(door);
+    // Invisible aim box over the oven mouth, so the target doesn't flicker as the door swings.
+    const aimBox = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.85, 1.0), new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, transparent: true, opacity: 0 }));
+    aimBox.position.set(X, 0.95, ZF - 0.4);
+    g.add(aimBox);
+    aimBox.userData.noShadow = true;
+    tag(aimBox, { station: 'oven', aimVolume: true });
 
     // Control panel (right cheek): knobs + power lamp.
     for (let i = 0; i < 3; i++) {

@@ -310,8 +310,10 @@ export class Items {
   }
 
   update(): void {
+    const live = new Set(this.list);
     for (const it of this.list.slice()) {
-      if (it.carrier) continue;
+      // Something earlier this frame may have removed it (a crash, the bin, falling out of the world): its body is gone.
+      if (it.carrier || !live.has(it) || !this.list.includes(it)) continue;
       const t = it.body.translation();
       const r = it.body.rotation();
       it.group.position.set(t.x, t.y, t.z);

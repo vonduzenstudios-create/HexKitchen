@@ -51,6 +51,7 @@ export class Interaction {
   prompt = '';
   private pending: { station: StationId; item: Item; t: number; moved: number } | null = null;
   private raycaster = new THREE.Raycaster();
+  private lastHeld: Item | null = null;
   private holdPos = new THREE.Vector3();
   private holdVel = new THREE.Vector3();
   private hasHoldPos = false;
@@ -90,7 +91,13 @@ export class Interaction {
     this.raycaster.setFromCamera(new THREE.Vector2(0, 0), cam);
     const objs = [...this.kitchen.pickables, ...this.items.meshes()];
     const hits = this.raycaster.intersectObjects(objs, true);
+    // Aim volumes (the oven mouth) only count if nothing more specific is hit behind them.
+    let fallback: Target | null = null;
     for (const h of hits) {
+      if (h.object.userData.aimVolume) {
+        fallback ??= { type: 'station', id: h.object.userData.station, point: h.point };
+        continue;
+      }
       const it = this.items.byObject(h.object);
       if (it) {
         if (it === this.held) continue;
@@ -113,7 +120,7 @@ export class Interaction {
       const toHook = this.kitchen.mirrorHook.clone().sub(cam.position);
       if (toHook.length() < REACH && toHook.normalize().dot(this.player.forward()) > 0.97) return { type: 'hook', point: this.kitchen.mirrorHook.clone() };
     }
-    return null;
+    return fallback;
   }
 
   private targetStation(t: Target | null): StationId | null {
@@ -143,6 +150,12 @@ export class Interaction {
     const root = item.root();
     const from = root.where === 'station' ? root.station : null;
     const hot = from === 'pan' || from === 'pot' || from === 'fryer' || from === 'oven';
+    if (hot && !this.wearingMitts && from === 'oven') {
+      // The oven is too hot to reach into barehanded: yelp and leave the tray where it is.
+      this.player.shake = Math.max(this.player.shake, 0.4);
+      this.events.burnedHand(item);
+      return;
+    }
     // Picking a piece off a tray or trolley lifts it (and anything assembled on it) away.
     if (item.carrier) {
       // A part tucked into an assembly lifts the whole assembly.
@@ -261,6 +274,8 @@ export class Interaction {
       this.stations.place(st, it, t.point);
       return true;
     }
+    // Food clicked at the oven stays in hand; the prompt says to use a tray.
+    if (st === 'oven') return 'refused';
     return false;
   }
 
@@ -368,6 +383,11 @@ export class Interaction {
       audio.play('reflect', { volume: 0.25, pitch: 1.6 });
     }
 
+    // What's in your hands is a ghost: swinging it around must not bat trays through walls or shove you.
+    const last = this.lastHeld;
+    if (last && last !== this.held && !last.carrier && this.items.list.includes(last)) last.collider.setEnabled(true);
+    if (this.held) this.held.collider.setEnabled(false);
+    this.lastHeld = this.held;
     this.updateHeld(dt);
     this.updateHands(dt);
     this.prompt = enabled ? this.makePrompt() : '';
@@ -487,7 +507,7 @@ export class Interaction {
         const rootSt = t.item.root().where === 'station' ? t.item.root().station : null;
         if (rootSt === 'oven') {
           const what = t.item.kind === 'tray' ? 'the tray' : t.item.name;
-          return this.wearingMitts ? `Click: take ${what} out of the oven` : `HOT! Put on the oven mitts first  ·  Click: grab ${what} anyway`;
+          return this.wearingMitts ? `Click: take ${what} out of the oven` : 'HOT! Put on the oven mitts first (hook by the stove)';
         }
         if (t.station && WORKABLE.includes(t.station) && this.isWorkable(t.station, t.item)) {
           const verb = t.station === 'board' ? 'chop' : t.station === 'prep' ? 'season' : 'flip';

@@ -46,6 +46,7 @@ const RATTLE_FROM = 3.6;
 export class Hotel {
   trolley: Item | null = null;
   private door = 0;
+  private doorHold = 0;
   private wasReady = false;
   private time = 0;
   private toast: { item: Item; t: number } | null = null;
@@ -107,7 +108,7 @@ export class Hotel {
   }
 
   private restockTrays(): void {
-    const free = (p: THREE.Vector3) => !this.d.items.list.some((i) => i.kind === 'tray' && i.where !== 'gone' && i.group.position.distanceTo(p) < 0.4);
+    const free = (p: THREE.Vector3) => !this.d.items.list.some((i) => i.kind === 'tray' && i.where !== 'gone' && i.group.position.distanceTo(p) < 0.12);
     for (const p of this.set.trayRack) if (free(p)) this.d.items.spawn('tray', p.clone().add(new THREE.Vector3(0, 0.03, 0)));
   }
 
@@ -208,7 +209,10 @@ export class Hotel {
     const near = this.d.player.position.distanceTo(oven.front) < 1.9;
     const aimed = it.target && ((it.target.type === 'station' && it.target.id === 'oven') || (it.target.type === 'item' && it.target.item.root().station === 'oven'));
     // The door drops open when you come to use it, and swings shut on its own.
-    const want = near && (aimed || it.held?.kind === 'tray') ? 1 : 0;
+    // Only for a tray going in, or empty hands (or mitts) coming to take one out; it lingers a moment so it doesn't flap.
+    if (near && (it.held?.kind === 'tray' || (aimed && !it.held))) this.doorHold = 0.8;
+    else this.doorHold -= dt;
+    const want = near && this.doorHold > 0 ? 1 : 0;
     this.door += (want - this.door) * Math.min(1, dt * 6);
     oven.setDoor(this.door);
     st.ovenDoorOpen = this.door > 0.5;
