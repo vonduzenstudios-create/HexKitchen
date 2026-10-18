@@ -118,7 +118,7 @@ export class PlatingMode {
     this.center.set(base.x, COUNTER_TOP + 0.035, base.z);
     const n = ticket.recipe.components.length;
     // Simple dishes get less time than signature ones; high Wrath shortens it further.
-    this.timeMax = (boss ? 20 : n >= 2 && ticket.recipe.id !== 'caesar' ? 15 : 13) * (1 - 0.3 * (this.wrath() / 100));
+    this.timeMax = (boss ? 48 : n >= 2 && ticket.recipe.id !== 'caesar' ? 38 : 30) * (1 - 0.2 * (this.wrath() / 100));
     this.timeLeft = this.timeMax;
     this.cursor.set(0, 0);
     this.comps = this.stations.plates[plate].slots
@@ -350,7 +350,7 @@ export class PlatingMode {
 
   private worstIssue(): LineKey {
     const b = this.evaluate();
-    if (this.timeLeft < 4) return 'platingHurry';
+    if (this.timeLeft < 8) return 'platingHurry';
     const scaled: [LineKey, number][] = [
       ['platingRim', b.rim / 15],
       ['platingClutter', Math.min(b.spacing / 20, b.garnish / 10)],
