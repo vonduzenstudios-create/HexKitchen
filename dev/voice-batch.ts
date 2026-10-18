@@ -16,7 +16,9 @@ const lines = readFileSync(process.env.REFS!, 'utf8').split('\n').filter(Boolean
 const opts = { british: process.env.BRIT !== '0', growl: +(process.env.GROWL ?? 0), pitch: process.env.PITCH ? +process.env.PITCH : undefined, rate: process.env.RATE ? +process.env.RATE : undefined };
 lines.forEach((l, i) => {
   const r = renderSpeech(l, opts);
-  writeFileSync(`${out}/${String(i).padStart(2, '0')}.wav`, wav(r.samples, r.sampleRate));
+  const pad = new Float32Array(r.samples.length + Math.round(r.sampleRate * 0.6));
+  pad.set(r.samples, Math.round(r.sampleRate * 0.3));
+  writeFileSync(`${out}/${String(i).padStart(2, '0')}.wav`, wav(pad, r.sampleRate));
 });
 // reference phonemes (CMU 39-phone set) for phone-error-rate scoring
 import { planSpeech } from '../src/audio/voice/render';

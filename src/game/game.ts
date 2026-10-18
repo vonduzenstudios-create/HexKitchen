@@ -140,6 +140,8 @@ export class Game {
     });
     this.rivals = new Rivals(this.scene, this.kitchen.rivalSpots, this.physics, this.particles);
     const rig = buildGorgon();
+    // Only draw the gaze cone from outside; from inside it would tint the whole screen.
+    if (rig.glowCone) (rig.glowCone.material as THREE.Material).side = THREE.FrontSide;
     this.scene.add(rig.root);
     this.gorgon = new GorgonAI(rig, this.kitchen.waypoints, this.gorgonWorld(), this.kitchen.door);
 
@@ -147,6 +149,8 @@ export class Game {
     this.scene.add(this.player.camera);
     this.hands = buildHands();
     this.player.camera.add(this.hands.root);
+    // Push the hands a little further away and lower so they frame the view without hogging it.
+    this.hands.root.position.set(0, -0.05, -0.12);
     this.interact = new Interaction(this.player, this.kitchen, this.items, this.stations, this.hands, {
       serve: (plates) => this.serve(plates),
       grabbed: () => {},
@@ -451,9 +455,10 @@ export class Game {
     const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
     let stars = avg >= 90 ? 5 : avg >= 75 ? 4 : avg >= 60 ? 3 : avg >= 40 ? 2 : 1;
     if (!won) stars = Math.min(stars, 2);
+    const reached = ROUNDS.slice(0, this.roundIndex + 1).flatMap((r) => r.recipes);
     const rows: [string, string][] = ROUNDS.flatMap((r) => r.recipes).map((rec) => {
-      const res = this.results.find((x) => x.recipe === rec);
-      return [rec.name, res ? (res.result ? `${res.result.score} · ${res.result.grade}` : 'not served') : 'never reached'];
+      const res = this.results.find((x) => x.recipe === rec)?.result;
+      return [rec.name, res ? `${res.score} · ${res.grade}` : reached.includes(rec) ? 'not served' : 'never reached'];
     });
     rows.push(['Food dropped', `${this.stats.dropped}`]);
     rows.push(['Gazes survived', `${this.stats.gazesSurvived}`]);
@@ -466,7 +471,7 @@ export class Game {
   }
 
   private trackWorst(text: string, score: number): void {
-    if (score < this.stats.worstScore) {
+    if (score < 70 && score < this.stats.worstScore) {
       this.stats.worstScore = score;
       this.stats.worst = text;
     }
@@ -538,7 +543,7 @@ export class Game {
     this.kitchen.update(this.time, this.wrath / 100);
     this.renderer.stone = this.stoneVisual;
     this.renderer.flash = this.flash;
-    this.renderer.glow = this.gorgon.glow * 0.6;
+    this.renderer.glow = this.gorgon.glow * 0.3;
     this.renderer.render(this.scene, this.player.camera, this.time);
     this.input.endFrame();
   }

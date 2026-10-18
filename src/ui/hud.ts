@@ -193,7 +193,7 @@ export class Hud {
     const stars = Array.from({ length: 5 }, (_, i) => (i < s.stars ? '★' : '<span class="off">★</span>')).join('');
     const rows = s.rows.map(([a, b]) => `<span>${a}</span><span>${b}</span>`).join('');
     return this.showScreen(`
-      <h1 class="logo display" style="font-size:clamp(40px,9vw,88px)">${s.title}</h1>
+      <h1 class="logo display" style="font-size:clamp(36px,7vw,72px)">${s.title}</h1>
       <div class="stars">${stars}</div>
       <p class="quote">"${s.quote}"<br>— Gorgon Ramsey</p>
       <div class="stats">${rows}</div>

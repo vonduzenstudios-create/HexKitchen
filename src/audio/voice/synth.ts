@@ -83,11 +83,12 @@ function locusOf(segs: Seg[], i: number): F3 {
 }
 
 const FNP = 270;
+const FRIC_GAIN = 4;
 
 function buildTracks(u: Utterance) {
   const segs = u.segs;
   const fmt = new Track(6, true);     // F1 F2 F3 B1 B2 B3
-  const src = new Track(6, false);    // AV AH AF FNZ SIB VBAR
+  const src = new Track(8, false);    // AV AH AF FNZ SIB VBAR AVS NASLP
   const fric = new Track(7, false);   // f1 bw1 g1 f2 bw2 g2 byp
   const specArr = (sp: FricSpec) => [sp.f1, sp.bw1, sp.g1, sp.f2, sp.bw2, sp.g2, sp.byp];
 
@@ -143,22 +144,37 @@ function buildTracks(u: Utterance) {
       }
     }
     // ---------- source ----------
-    const r = s.part === 'bur' ? 0.0015 : s.part === 'asp' ? 0.004 : Math.min(0.012, dur / 3);
-    let AV = 0, AH = 0, AF = 0, FNZ = FNP, SIB = 0, VB = 0;
+    const son = !!d && s.part === 'main' && (d.kind === 'vowel' || d.kind === 'diph' || d.kind === 'liquid' || d.kind === 'glide' || d.kind === 'nasal');
+    const r = s.part === 'bur' ? 0.0015 : s.part === 'asp' ? 0.004 : Math.min(son ? 0.01 : 0.005, dur / 3);
+    let AV = 0, AH = 0, AF = 0, FNZ = FNP, SIB = 0, VB = 0, AVS = 0, NL = 0;
+    let FNZ0 = -1, FNZ1 = -1;
     if (d) {
       const a = s.amp;
       switch (s.part) {
         case 'main':
           if (d.kind === 'asp') AH = 0.42 * a;
-          else { AV = d.av * a; AF = d.af * a; if (d.kind === 'nasal') FNZ = d.fnz ?? 450; SIB = d.sib ? 1 : 0; }
+          else if (d.kind === 'fric' && d.voiced) { AVS = d.av * a; AV = d.av * a * 0.15; AF = d.af * a; SIB = d.sib ? 1 : 0; }
+          else {
+            AV = d.av * a; AF = d.af * a; SIB = d.sib ? 1 : 0;
+            if (d.kind === 'nasal') { FNZ = d.fnz ?? 450; NL = 0.8; }
+            else if (d.kind === 'vowel' || d.kind === 'diph') {
+              // nasalise vowels next to nasals (extra pole-zero pair near F1)
+              const pn = segs[i - 1]?.def?.kind === 'nasal', nn = segs[i + 1]?.def?.kind === 'nasal';
+              FNZ0 = pn ? 420 : FNP; FNZ1 = nn ? 420 : FNP;
+            }
+          }
           break;
-        case 'clo': if (s.voiceBar) { AV = 0.1; VB = 1; } break;
+        case 'clo': if (s.voiceBar) { AVS = 0.25; VB = 1; } break;
         case 'bur': AF = (s.burstAmp ?? 0.5) * a; break;
-        case 'asp': AH = 0.38 * a; break;
-        case 'fr': AV = d.av * a * 0.6; AF = d.af * a; SIB = 1; break;
+        case 'asp':
+          if (s.ph === 'K' || s.ph === 'G') { AH = 0.3 * a; AF = 0.12 * a; }
+          else if (s.ph === 'T') { AH = 0.3 * a; AF = 0.12 * a; }
+          else AH = 0.36 * a;
+          break;
+        case 'fr': AVS = d.av * a; AV = d.av * a * 0.15; AF = d.af * a; SIB = 1; break;
       }
       if (d.kind === 'fric' || s.part === 'fr') fric.add(st, specArr(d.fric!)), fric.add(en, specArr(d.fric!));
-      if (s.part === 'bur' && d.burst) {
+      if ((s.part === 'bur' || s.part === 'asp') && d.burst) {
         let sp = d.burst.spec;
         if (s.ph === 'K' || s.ph === 'G') {
           const f2 = nextVowelF2(segs, i);
@@ -167,8 +183,8 @@ function buildTracks(u: Utterance) {
         fric.add(st, specArr(sp)); fric.add(en, specArr(sp));
       }
     }
-    src.add(st + r, [AV, AH, AF, FNZ, SIB, VB]);
-    src.add(en - r, [AV, AH, AF, FNZ, SIB, VB]);
+    src.add(st + r, [AV, AH, AF, FNZ0 >= 0 ? FNZ0 : FNZ, SIB, VB, AVS, NL]);
+    src.add(en - r, [AV, AH, AF, FNZ1 >= 0 ? FNZ1 : FNZ, SIB, VB, AVS, NL]);
   }
   if (!fmt.times.length) fmt.add(0, [500, 1500, 2500, 80, 100, 160]);
   if (!fric.times.length) fric.add(0, specArr(PH.S.fric!));
@@ -199,17 +215,19 @@ export function synthesize(u: Utterance, o: SynthOpts): SynthOut {
   const BP1 = new Biquad(sr), BP2 = new Biquad(sr), HPb = new Biquad(sr).highpass(1200, 0.7);
   const tiltF = new OnePole(sr * (0.14 - 0.08 * (o.tilt ?? 0.3)), sr);
   const aspLP = new OnePole(5000, sr);
+  const avsLP1 = new OnePole(260, sr), avsLP2 = new OnePole(260, sr);
+  const murkLP1 = new OnePole(700, sr), murkLP2 = new OnePole(700, sr);
   const dc = new DCBlock();
   R4.set(3500 * fMul, 250, sr);
   R5.set(Math.min(4500 * fMul, sr * 0.45), 300, sr);
   RNP.set(FNP, 100, sr);
 
   const FR = Math.max(16, Math.round(sr * 0.0025));
-  const fv = [0, 0, 0, 0, 0, 0], sv0 = [0, 0, 0, 0, 0, 0], sv1 = [0, 0, 0, 0, 0, 0], fr = [0, 0, 0, 0, 0, 0, 0], f0v = [0];
+  const fv = [0, 0, 0, 0, 0, 0], sv0 = [0, 0, 0, 0, 0, 0, 0, 0], sv1 = [0, 0, 0, 0, 0, 0, 0, 0], fr = [0, 0, 0, 0, 0, 0, 0], f0v = [0];
   src.at(0, sv0);
 
   let phase = 0, period = 0, jitter = 1, shimmer = 1;
-  const OQ = 0.6;
+  const OQ = 0.65;
   let vibPh = 0;
 
   for (let n0 = 0; n0 < N; n0 += FR) {
@@ -232,6 +250,7 @@ export function synthesize(u: Utterance, o: SynthOpts): SynthOut {
       const AH = sv0[1] + (sv1[1] - sv0[1]) * u01;
       const AF = sv0[2] + (sv1[2] - sv0[2]) * u01;
       const SIB = sv0[4] + (sv1[4] - sv0[4]) * u01;
+      const AVS = sv0[6] + (sv1[6] - sv0[6]) * u01;
       // ----- glottal source
       vibPh += 5.2 / sr;
       const vib = 1 + 0.006 * Math.sin(vibPh * 6.2832);
@@ -248,7 +267,9 @@ export function synthesize(u: Utterance, o: SynthOpts): SynthOut {
       const g = tp < 1 ? (2 * tp - 3 * tp * tp) : 0;
       const open = tp < 1;
       const noise = rnd() * 2 - 1;
-      const voiced = tiltF.process(g * shimmer) * AV * 3;
+      const gs = tiltF.process(g * shimmer);
+      const sinV = avsLP2.process(avsLP1.process(gs));
+      const voiced = gs * AV * 3 + sinV * AVS * 5;
       const asp = aspLP.process(noise) * (AH + breath * AV * (open ? 1 : 0.3)) * 1.6;
       // ----- cascade
       let c = voiced + asp;
@@ -262,10 +283,12 @@ export function synthesize(u: Utterance, o: SynthOpts): SynthOut {
         const x = noise * AF * nmod;
         f = BP1.process(x) * fr[2] + BP2.process(x) * fr[5] + HPb.process(x) * fr[6];
       } else if (!o.voicedOnly) { BP1.process(0); BP2.process(0); HPb.process(0); }
-      out[n] = dc.process(c * 1.0 + f * 1.6);
+      const NL = sv0[7] + (sv1[7] - sv0[7]) * u01;
+      if (NL > 0.001) c = c * (1 - NL) + murkLP2.process(murkLP1.process(c)) * NL * 1.3; else { murkLP1.process(c); murkLP2.process(c); }
+      out[n] = dc.process(c * 1.0 + f * FRIC_GAIN);
       sibOut[n] = SIB * AF;
     }
-    sv0[0] = sv1[0]; sv0[1] = sv1[1]; sv0[2] = sv1[2]; sv0[3] = sv1[3]; sv0[4] = sv1[4]; sv0[5] = sv1[5];
+    for (let k = 0; k < 8; k++) sv0[k] = sv1[k];
   }
   return { samples: out, sib: sibOut, sampleRate: sr };
 }

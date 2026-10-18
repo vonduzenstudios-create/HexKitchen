@@ -59,11 +59,14 @@ export function normalize(text: string): PhraseTok[] {
   let s = String(text ?? '');
   s = s.replace(/[‘’ʼ`]/g, "'").replace(/[“”]/g, '"');
   s = s.replace(/…/g, '...').replace(/[–—]/g, ' , ').replace(/\s--+\s|--+/g, ' , ');
+  const raw: string[] = [];
+  s = s.replace(/\{[^}]*\}/g, (m) => { raw.push(m); return ' ' + String.fromCharCode(0xe000 + raw.length - 1) + ' '; });
   s = expandNumbers(s);
   s = s.replace(/&/g, ' and ').replace(/%/g, ' percent ').replace(/\+/g, ' plus ').replace(/@/g, ' at ').replace(/#/g, ' number ');
   s = s.replace(/(\w)-(\w)/g, '$1 $2');
+  s = s.replace(/[\ue000-\uefff]/g, (m) => raw[m.charCodeAt(0) - 0xe000].toUpperCase());
 
-  const tokens = s.match(/[A-Za-z]+(?:'[A-Za-z]+)*|\.{2,}|[.!?,;:]+/g) || [];
+  const tokens = s.match(/\{[A-Za-z0-9 ]+\}|[A-Za-z]+(?:'[A-Za-z]+)*|\.{2,}|[.!?,;:]+/g) || [];
   const phrases: PhraseTok[] = [];
   let cur: WordTok[] = [];
   const flush = (end: PhraseEnd) => {
@@ -76,7 +79,9 @@ export function normalize(text: string): PhraseTok[] {
     cur = [];
   };
   for (const t of tokens) {
-    if (/^[A-Za-z]/.test(t)) {
+    if (t.startsWith('{')) {
+      cur.push({ text: t, emph: false }); // raw ARPAbet, e.g. {HH EH1 K S}
+    } else if (/^[A-Za-z]/.test(t)) {
       const letters = t.replace(/[^A-Za-z]/g, '');
       const emph = letters.length >= 2 && letters === letters.toUpperCase();
       cur.push({ text: t, emph });

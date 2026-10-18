@@ -321,7 +321,7 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
     root.add(tube);
     tubes.push(tube);
   }
-  const passLight = new THREE.PointLight(0xffb060, 6, 4, 1.5);
+  const passLight = new THREE.PointLight(0xffb060, 2.6, 3.5, 1.6);
   passLight.position.set(3.35, 1.6, -1.9);
   scene.add(passLight);
   scene.fog = new THREE.Fog(0x0b0a08, 5, 15);
@@ -383,7 +383,7 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
         l.intensity = (9 - dread * 4) * on;
         (tubes[i].material as THREE.MeshBasicMaterial).color.setScalar(0.35 + 0.6 * on);
       });
-      passLight.intensity = 6 + Math.sin(t * 3) * 0.3;
+      passLight.intensity = 2.6 + Math.sin(t * 3) * 0.15;
     },
   };
 }

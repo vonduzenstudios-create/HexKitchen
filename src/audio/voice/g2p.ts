@@ -109,6 +109,7 @@ const cache = new Map<string, Phone[]>();
 
 /** Convert one word to phonemes with stress. */
 export function wordToPhones(word: string): Phone[] {
+  if (word.startsWith('{')) return parse(word.slice(1, -1).trim().toUpperCase().split(/\s+/).filter((x) => /^[A-Z]+[012]?$/.test(x)));
   const w = word.toUpperCase().replace(/[^A-Z']/g, '').replace(/^'+|'+$/g, '');
   if (!w) return [];
   const c = cache.get(w);
