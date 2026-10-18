@@ -8,7 +8,7 @@ import type { PsxRenderer } from '../engine/renderer';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Hud } from '../ui/hud';
 import { GorgonAI, type GorgonWorld, type RoundTemper } from './gorgonAI';
-import { ingredientMeshFactories } from './ingredients';
+import { INGREDIENTS, ingredientMeshFactories } from './ingredients';
 import { Interaction } from './interact';
 import { Items, type Item } from './items';
 import { buildKitchen, type Kitchen, type StationId } from './kitchen';
@@ -107,6 +107,11 @@ export class Game {
   async init(): Promise<void> {
     await this.physics.init();
     this.kitchen = buildKitchen(this.scene, this.physics, ingredientMeshFactories);
+    // Build every ingredient's textures and geometry up front so the first grab doesn't hitch.
+    for (const def of Object.values(INGREDIENTS)) {
+      def.whole();
+      def.chopped();
+    }
     // Soft image-based reflections so steel, sauces and Gorgon's eyes catch the light.
     const pmrem = new THREE.PMREMGenerator(this.renderer.gl);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;

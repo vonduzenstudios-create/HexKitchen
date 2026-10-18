@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mat } from '../engine/psx';
-import { CreepingStone, type V3, addMesh, box, damp } from './common';
+import { CreepingStone, type V3, addMesh, damp } from './common';
 
 // First-person hands. The game parents `root` to the camera (camera looks down -Z).
 // Each hand is built in a "handshake" frame: fingers along -Z, palm facing the body's
@@ -24,6 +25,7 @@ export interface HandsRig {
 const SKIN = 0xe0a074;
 const SLEEVE = 0xf2efe8;
 const CUFF = 0xdedad2;
+const NAIL = 0xf0c0a8;
 
 interface HandState {
   pos: V3;
@@ -49,74 +51,176 @@ const RENDER_ORDER = 10;
 /** Global nudge applied to every pose so the hands sit comfortably in view. */
 const POS_OFFSET: V3 = [0, 0.065, -0.03];
 
+// ---------------------------------------------------------------------------------------------
+// Smooth geometry helpers (all along the -Z "finger" axis)
+
+/** Capsule spanning z0 (near, +Z) to z1 (far, -Z), including the rounded caps. */
+function capsuleZ(r: number, z0: number, z1: number, radial = 8, cap = 3): THREE.BufferGeometry {
+  const len = Math.max(0.0001, Math.abs(z0 - z1) - 2 * r);
+  const g = new THREE.CapsuleGeometry(r, len, cap, radial);
+  g.rotateX(Math.PI / 2);
+  g.translate(0, 0, (z0 + z1) / 2);
+  return g;
+}
+
+/** Scale x/y cross-section linearly from sA at zA to sB at zB (clamped). Normals left as-is. */
+function taper(g: THREE.BufferGeometry, zA: number, zB: number, sA: number, sB: number): THREE.BufferGeometry {
+  const p = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const u = THREE.MathUtils.clamp((p.getZ(i) - zA) / (zB - zA), 0, 1);
+    const k = sA + (sB - sA) * u;
+    p.setXY(i, p.getX(i) * k, p.getY(i) * k);
+  }
+  p.needsUpdate = true;
+  return g;
+}
+
+/** Rounded "superellipsoid" blob: e=1 is an ellipsoid, smaller e is boxier. Seamless normals. */
+function blob(sx: number, sy: number, sz: number, e = 1, w = 14, h = 10): THREE.BufferGeometry {
+  let g: THREE.BufferGeometry = new THREE.SphereGeometry(1, w, h);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const f = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), e);
+  for (let i = 0; i < p.count; i++) p.setXYZ(i, f(p.getX(i)) * sx, f(p.getY(i)) * sy, f(p.getZ(i)) * sz);
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  g = mergeVertices(g);
+  g.computeVertexNormals();
+  return g;
+}
+
+function latheZ(profile: [number, number][], seg = 20): THREE.BufferGeometry {
+  // profile: [radius, z] with z increasing (front of sleeve -> back toward the camera)
+  const g = new THREE.LatheGeometry(
+    profile.map(([r, z]) => new THREE.Vector2(r, z)),
+    seg,
+  );
+  g.rotateX(Math.PI / 2);
+  return g;
+}
+
 function buildHand(side: 1 | -1, stone: CreepingStone): Hand {
   const s = side;
   const skin = (d: number) => {
-    const m = mat(SKIN);
+    const m = mat(SKIN, { roughness: 0.55 });
     stone.add(m, d);
     return m;
   };
+  const nailMat = mat(NAIL, { roughness: 0.3 });
+  stone.add(nailMat, 0.0);
   const arm = new THREE.Group();
   arm.rotation.order = 'YXZ';
 
-  // sleeve + cuff, running back toward the camera
-  const sleeveMat = mat(SLEEVE);
+  // sleeve with soft fabric folds, running back toward the camera
+  const sleeveMat = mat(SLEEVE, { roughness: 0.92 });
   stone.add(sleeveMat, 1.0);
-  const sg = new THREE.CylinderGeometry(0.046, 0.054, 0.32, 7, 1);
-  sg.rotateX(Math.PI / 2);
-  sg.translate(0, 0, 0.21);
-  addMesh(arm, sg, sleeveMat);
-  const cuffMat = mat(CUFF);
+  addMesh(
+    arm,
+    latheZ([
+      [0.046, 0.06],
+      [0.0525, 0.075],
+      [0.0545, 0.11],
+      [0.0525, 0.15],
+      [0.0545, 0.19],
+      [0.0525, 0.24],
+      [0.0505, 0.3],
+      [0.047, 0.36],
+      [0.03, 0.375],
+    ]),
+    sleeveMat,
+  );
+  // rolled cuff: a thick folded band with a rounded lip at the wrist
+  const cuffMat = mat(CUFF, { roughness: 0.9 });
   stone.add(cuffMat, 0.85);
-  const cg = new THREE.CylinderGeometry(0.06, 0.06, 0.06, 7, 1);
-  cg.rotateX(Math.PI / 2);
-  cg.translate(0, 0, 0.055);
-  addMesh(arm, cg, cuffMat);
-  // cuff seam
-  const seamMat = mat(0xb8b4ac);
+  addMesh(
+    arm,
+    latheZ([
+      [0.044, 0.026],
+      [0.051, 0.02],
+      [0.0585, 0.022],
+      [0.0625, 0.032],
+      [0.063, 0.048],
+      [0.0612, 0.058],
+      [0.0632, 0.068],
+      [0.0622, 0.08],
+      [0.057, 0.088],
+      [0.05, 0.09],
+    ]),
+    cuffMat,
+  );
+  // fold crease between the two rolls of the cuff
+  const seamMat = mat(0xb8b4ac, { roughness: 0.95 });
   stone.add(seamMat, 0.85);
-  const seam = new THREE.CylinderGeometry(0.0615, 0.0615, 0.008, 7, 1);
-  seam.rotateX(Math.PI / 2);
-  seam.translate(0, 0, 0.03);
+  const seam = new THREE.TorusGeometry(0.0612, 0.0016, 4, 20);
+  seam.translate(0, 0, 0.058);
   addMesh(arm, seam, seamMat);
-  // wrist stub
-  const wristStub = new THREE.CylinderGeometry(0.036, 0.04, 0.05, 6, 1);
-  wristStub.rotateX(Math.PI / 2);
-  wristStub.translate(0, 0, 0.012);
-  addMesh(arm, wristStub, skin(0.6));
+  // wrist (slightly flattened, wider than thick)
+  const wristGeo = capsuleZ(0.034, 0.06, -0.03, 10, 3);
+  wristGeo.scale(0.74, 1, 1);
+  addMesh(arm, wristGeo, skin(0.6));
 
   const wrist = new THREE.Group();
   arm.add(wrist);
-  // palm: back half and front half (chunky)
-  addMesh(wrist, box(0.042, 0.092, 0.05, 0, 0, -0.025), skin(0.45));
-  addMesh(wrist, box(0.044, 0.098, 0.05, 0, -0.002, -0.07), skin(0.32));
-  // fleshy thumb pad on the palm side
-  addMesh(wrist, box(0.02, 0.04, 0.05, -s * 0.024, 0.02, -0.035), skin(0.4));
+  // palm: a rounded, slightly boxy pad, narrower toward the wrist
+  const palm = blob(0.0215, 0.05, 0.053, 0.6, 14, 10);
+  palm.translate(0, -0.001, -0.05);
+  taper(palm, -0.005, -0.06, 0.82, 1);
+  addMesh(wrist, palm, skin(0.38));
+  // fleshy thumb (thenar) and outer-edge (hypothenar) pads on the palm side
+  const thenar = blob(0.012, 0.021, 0.03, 1, 10, 8);
+  thenar.translate(-s * 0.012, 0.022, -0.036);
+  addMesh(wrist, thenar, skin(0.4));
+  const hypo = blob(0.0105, 0.016, 0.034, 1, 10, 8);
+  hypo.translate(-s * 0.009, -0.03, -0.046);
+  addMesh(wrist, hypo, skin(0.4));
 
   const knuckles: THREE.Group[] = [];
   const mids: THREE.Group[] = [];
   const fingerYs = [0.034, 0.011, -0.012, -0.034];
   const lens = [0.042, 0.046, 0.043, 0.034];
+  const radii = [0.0108, 0.0113, 0.0107, 0.0095];
   for (let i = 0; i < 4; i++) {
+    const r = radii[i];
     const k = new THREE.Group();
     k.position.set(0, fingerYs[i], -0.094);
     wrist.add(k);
-    addMesh(k, box(0.03, 0.022, lens[i] + 0.006, 0, 0, -lens[i] / 2), skin(0.14));
+    // proximal phalanx, starting with a rounded knuckle tucked into the palm
+    const prox = capsuleZ(r, r * 0.9, -(lens[i] + r * 0.55));
+    prox.scale(1.06, 1, 1);
+    addMesh(k, prox, skin(0.14));
     const m = new THREE.Group();
     m.position.z = -lens[i];
     k.add(m);
-    addMesh(m, box(0.027, 0.02, lens[i] * 0.85, 0, 0, -lens[i] * 0.42), skin(0.0));
+    // middle + distal phalanx, tapering to the fingertip
+    const r2 = r * 0.93;
+    const tip = -(lens[i] * 0.85 + r2 * 0.25);
+    const dist = capsuleZ(r2, r2 * 0.8, tip);
+    taper(dist, 0, tip, 1, 0.84);
+    dist.scale(1.04, 1, 1);
+    addMesh(m, dist, skin(0.0));
+    // subtle fingernail on the back of the fingertip
+    const nail = blob(0.0022, r2 * 0.62, r2 * 1.05, 0.8, 8, 6);
+    nail.translate(s * r2 * 0.86, 0, tip + r2 * 1.35);
+    addMesh(m, nail, nailMat);
     knuckles.push(k);
     mids.push(m);
   }
   const thumbBase = new THREE.Group();
   thumbBase.position.set(-s * 0.02, 0.04, -0.035);
   wrist.add(thumbBase);
-  addMesh(thumbBase, box(0.028, 0.028, 0.045, 0, 0, -0.02), skin(0.16));
+  const tb = capsuleZ(0.0128, 0.014, -0.047);
+  tb.scale(1, 0.95, 1);
+  addMesh(thumbBase, tb, skin(0.16));
   const thumbTip = new THREE.Group();
   thumbTip.position.z = -0.042;
   thumbBase.add(thumbTip);
-  addMesh(thumbTip, box(0.025, 0.025, 0.035, 0, 0, -0.016), skin(0.04));
+  const ttEnd = -0.038;
+  const tt = capsuleZ(0.0118, 0.01, ttEnd);
+  taper(tt, 0, ttEnd, 1, 0.86);
+  addMesh(thumbTip, tt, skin(0.04));
+  // thumbnail faces up (+Y) in the handshake frame
+  const tnail = blob(0.0075, 0.0022, 0.0115, 0.8, 8, 6);
+  tnail.translate(0, 0.0118 * 0.86, ttEnd + 0.0155);
+  addMesh(thumbTip, tnail, nailMat);
 
   const grip = new THREE.Object3D();
   grip.position.set(-s * 0.04, 0, -0.105);
