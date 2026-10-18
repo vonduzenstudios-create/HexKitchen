@@ -29,11 +29,13 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 
 ## The episode
 
+The **What to do** list on the right walks you through each dish one step at a time, with a hint for the current step.
+
 | Round | Time | Dish |
 | --- | --- | --- |
-| 1. The Appetizer | 1:15 | Cursed Caesar: chop and season lettuce, chop bread into croutons |
-| 2. Dinner Rush | 2:15 | Steak & Fries (season and pan-fry the steak, chop and deep-fry potato) and Spaghetti Pomodoro (boil pasta, dice tomato) at the same time |
-| 3. The Final Judgment | 1:30 | Medusa Wellington: season and sear beef, chop mushrooms, boil green beans. Gorgon tastes it and decides your fate |
+| 1. The Appetizer | 4:00 | Cursed Caesar: chop and season lettuce, chop bread into croutons |
+| 2. Dinner Rush | 6:00 | Steak & Fries (season and pan-fry the steak, chop and deep-fry potato) and Spaghetti Pomodoro (boil pasta, dice tomato) at the same time |
+| 3. The Final Judgment | 5:00 | Medusa Wellington: season and sear beef, chop mushrooms, boil green beans. Gorgon tastes it and decides your fate |
 
 **Gorgon's Wrath** rises with bad dishes, burnt food, dropped food and fires, and makes his interruptions more frequent. **Petrification** rises when you fail dishes or meet his gaze; at 100% you become a statue. Perfect dishes calm him and chip the stone away.
 

@@ -17,6 +17,7 @@ import { Player } from './player';
 import { evaluateDish, RECIPES, type DishResult, type Recipe } from './recipes';
 import { Rivals } from './rivals';
 import { Stations, type PlateId, type Ticket } from './stations';
+import { buildObjectives } from './objectives';
 
 interface RoundDef {
   name: string;
@@ -35,7 +36,7 @@ const ROUNDS: RoundDef[] = [
     title: 'Round 1',
     sub: 'The Appetizer: one Cursed Caesar',
     line: 'round1',
-    seconds: 75,
+    seconds: 240,
     recipes: [RECIPES.caesar],
     temper: { interval: 22, inspect: 1, gaze: 0.8, sabotage: 0, speed: 0.9, windup: 2.4 },
   },
@@ -44,7 +45,7 @@ const ROUNDS: RoundDef[] = [
     title: 'Round 2',
     sub: 'Dinner Rush: Steak & Fries AND Spaghetti',
     line: 'round2',
-    seconds: 135,
+    seconds: 360,
     recipes: [RECIPES.steakFries, RECIPES.spaghetti],
     temper: { interval: 15, inspect: 1, gaze: 1, sabotage: 0.8, speed: 1, windup: 2.0 },
   },
@@ -53,7 +54,7 @@ const ROUNDS: RoundDef[] = [
     title: 'The Final Judgment',
     sub: "Cook Gorgon's signature Medusa Wellington",
     line: 'round3',
-    seconds: 90,
+    seconds: 300,
     recipes: [RECIPES.wellington],
     temper: { interval: 10, inspect: 0.4, gaze: 1.4, sabotage: 1, speed: 1.25, windup: 1.6 },
     boss: true,
@@ -616,6 +617,7 @@ export class Game {
       for (const s of this.stations.plates[t.plate].slots) if (s.item) filled.add(s.kind);
       return filled;
     });
+    this.hud.setObjectives(this.roundIndex >= 0 ? buildObjectives(this.tickets, this.stations, this.items.list, this.interact.held) : []);
     const tgt = this.interact.target;
     this.hud.setPrompt(this.interact.prompt, !!tgt);
     const gaugeStation = this.interact.working ?? (tgt?.type === 'station' ? tgt.id : tgt?.type === 'item' ? tgt.station : null);

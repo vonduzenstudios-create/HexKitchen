@@ -1,4 +1,5 @@
 import type { Gauge, Ticket } from '../game/stations';
+import type { ObjectiveGroup } from '../game/objectives';
 import { STEP_LABEL } from '../game/recipes';
 import { INGREDIENTS } from '../game/ingredients';
 
@@ -31,6 +32,8 @@ export class Hud {
   private stoneFill: HTMLElement;
   private stoneLabel: HTMLElement;
   private tickets = el('div', 'tickets');
+  private objectives = el('div', 'objectives');
+  private lastObjectivesKey = '';
   private gaugeEl = el('div', 'gauge hidden');
   private subs = el('div', 'subs hidden');
   private banner = el('div', 'banner hidden');
@@ -65,6 +68,7 @@ export class Hud {
     this.stoneFill = s.fill;
     this.stoneLabel = s.label;
     s.foot.textContent = 'At 100% you become a statue.';
+    this.meters.append(this.objectives);
     this.play.append(this.crosshair, this.prompt, this.top, this.meters, this.tickets, this.gaugeEl, this.toastEl);
     root.append(this.play, this.subs, this.banner, this.screen);
     this.setPlaying(false);
@@ -112,6 +116,30 @@ export class Hud {
       card.innerHTML = `<h4 class="display">${t.recipe.name}</h4><div class="plate">${t.plate === 'plateA' ? 'Plate 1 (back)' : 'Plate 2 (front)'}${t.served ? ' · SERVED' : ''}</div><ul>${items}</ul>`;
       this.tickets.append(card);
     }
+  }
+
+  setObjectives(groups: ObjectiveGroup[]): void {
+    const key = JSON.stringify(groups);
+    if (key === this.lastObjectivesKey) return;
+    this.lastObjectivesKey = key;
+    const esc = (t: string) => t.replace(/</g, '&lt;');
+    this.objectives.innerHTML =
+      '<div class="obj-head">What to do</div>' +
+      groups
+        .map((g) => {
+          const lines = g.served
+            ? '<li class="done">Served</li>'
+            : g.lines
+                .map((l) => {
+                  const mark = l.state === 'done' ? '✓' : l.state === 'next' ? '▶' : '·';
+                  const warn = l.warn ? ` <em class="warn">(${esc(l.warn)})</em>` : '';
+                  const hint = l.hint ? `<div class="hint">${esc(l.hint)}</div>` : '';
+                  return `<li class="${l.state}"><span class="mark">${mark}</span><span>${esc(l.text)}${warn}${hint}</span></li>`;
+                })
+                .join('');
+          return `<div class="obj-group${g.served ? ' served' : ''}"><h4>${esc(g.title)}</h4><ul>${lines}</ul></div>`;
+        })
+        .join('');
   }
 
   setGauge(g: Gauge | null): void {
