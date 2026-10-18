@@ -141,7 +141,7 @@ export class PsxRenderer {
     const vw = Math.round(vh * (w / Math.max(1, h)));
     this.target.setSize(vw, vh);
     this.postMat.uniforms.uRes.value.set(vw, vh);
-    psxUniforms.uSnap.value.set(vw / 2, vh / 2);
+    psxUniforms.uSnap.value.set(vw, vh);
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera, time: number): void {

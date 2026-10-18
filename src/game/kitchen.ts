@@ -45,7 +45,9 @@ function box(
   size: [number, number, number],
   material: THREE.Material,
 ): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+  // Subdivide into ~0.6 m cells: big triangles warp and jump badly under PS1 vertex snapping.
+  const seg = (v: number) => Math.max(1, Math.ceil(v / 0.6));
+  const m = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2], seg(size[0]), seg(size[1]), seg(size[2])), material);
   m.position.set(...center);
   parent.add(m);
   if (physics) physics.addBox({ x: center[0], y: center[1], z: center[2] }, { x: size[0], y: size[1], z: size[2] });
@@ -71,14 +73,17 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
   const floorTex = tex.floor().clone();
   floorTex.repeat.set(6, 4.5);
   floorTex.needsUpdate = true;
-  const wallTex = tex.wallTile().clone();
-  wallTex.repeat.set(6, 1.6);
+  const wallTex = tex.drywall().clone();
+  wallTex.repeat.set(5, 1.35);
   wallTex.needsUpdate = true;
   const steelTex = tex.steel();
 
   const mFloor = mat(0xffffff, { map: floorTex });
   const mWall = mat(0xffffff, { map: wallTex });
-  const mCeil = mat(0x9a9488, { map: tex.ceiling() });
+  const ceilTex = tex.ceiling().clone();
+  ceilTex.repeat.set(8, 6);
+  ceilTex.needsUpdate = true;
+  const mCeil = mat(0xb0a898, { map: ceilTex });
   const mSteel = mat(0xd0d4d8, { map: steelTex });
   const mCabinet = mat(0x6c6f72, { map: steelTex });
   const mDark = mat(0x1e1e22);
@@ -91,6 +96,22 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
   const cz = 0.5;
   box(root, physics, [0, -0.1, cz], [W + 1, 0.2, D + 1], mFloor);
   box(root, null, [0, H + 0.1, cz], [W, 0.2, D], mCeil);
+  // Basement guts: exposed joists, ductwork and dripping pipes across the ceiling.
+  const mJoist = mat(0x6a5236, { map: tex.wood() });
+  for (let x = -5.5; x <= 5.5; x += 1.1) box(root, null, [x, H - 0.09, cz], [0.08, 0.18, D], mJoist);
+  const mPipe = mat(0x5a5e60);
+  const mCopper = mat(0x9a5a30);
+  for (const [z, r, m] of [
+    [-2.9, 0.05, mPipe],
+    [-2.6, 0.03, mCopper],
+    [1.2, 0.04, mCopper],
+  ] as [number, number, THREE.Material][]) {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(r, r, W, 6, 16), m);
+    pipe.rotation.z = Math.PI / 2;
+    pipe.position.set(0, H - 0.26, z);
+    root.add(pipe);
+  }
+  box(root, null, [-2.0, H - 0.35, 3.3], [0.5, 0.3, D * 0.35], mat(0x8a8e90, { map: steelTex }));
   box(root, physics, [0, H / 2, -4.1], [W, H, 0.2], mWall);
   box(root, physics, [0, H / 2, 5.1], [W, H, 0.2], mWall);
   box(root, physics, [-6.1, H / 2, cz], [0.2, H, D], mWall);
@@ -317,7 +338,13 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
     scene.add(l);
     fluoro.push(l);
     const tube = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.06, 0.2), tubeMat());
-    tube.position.set(x, H - 0.03, z);
+    // Hanging chains for the shop lights.
+    for (const cx of [-0.6, 0.6]) {
+      const chain = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.36, 0.015), mDark);
+      chain.position.set(x + cx, H - 0.24, z);
+      root.add(chain);
+    }
+    tube.position.set(x, H - 0.42, z);
     root.add(tube);
     tubes.push(tube);
   }

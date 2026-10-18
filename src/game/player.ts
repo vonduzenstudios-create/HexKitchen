@@ -92,7 +92,8 @@ export class Player {
       move.set(s, 0, -f);
       if (move.lengthSq() > 0) move.normalize();
       move.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-      const speed = THREE.MathUtils.lerp(3.2, 1.5, this.crouch);
+      const sprint = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight') ? 1.45 : 1;
+      const speed = THREE.MathUtils.lerp(4.8, 2.2, this.crouch) * sprint;
       move.multiplyScalar(speed * dt);
     }
     this.vy -= 9.81 * dt;

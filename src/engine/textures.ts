@@ -67,26 +67,58 @@ export const tex = {
         }
       }),
     ),
-  /** Off-white subway tile walls with dirty grout. */
-  wallTile: () =>
-    cached('wall', () =>
+  /** Dirty basement drywall: two 1.2 m sheets per tile, taped seams, water stains, scuffs. */
+  drywall: () =>
+    cached('drywall', () =>
       canvasTexture(64, 64, (g, w, h) => {
-        g.fillStyle = '#5e5a4c';
+        const r = rng(41);
+        g.fillStyle = '#a8a294';
         g.fillRect(0, 0, w, h);
-        for (let row = 0; row < 8; row++) {
-          const off = row % 2 ? 8 : 0;
-          for (let x = -16; x < w; x += 16) {
-            const r = rng(row * 31 + x)();
-            g.fillStyle = `rgb(${200 + r * 20},${196 + r * 18},${176 + r * 10})`;
-            g.fillRect(x + off + 1, row * 8 + 1, 14, 6);
-          }
+        // Low-frequency blotchy paint.
+        for (let i = 0; i < 60; i++) {
+          const v = 150 + r() * 30;
+          g.fillStyle = `rgba(${v},${v - 6},${v - 18},0.25)`;
+          g.fillRect(Math.floor(r() * w), Math.floor(r() * h), 4 + Math.floor(r() * 10), 3 + Math.floor(r() * 8));
         }
-        speckle(g, w, h, 90, 'rgba(70,50,20,0.3)', 11);
-        const grad = g.createLinearGradient(0, h, 0, h * 0.6);
-        grad.addColorStop(0, 'rgba(40,30,10,0.45)');
-        grad.addColorStop(1, 'rgba(40,30,10,0)');
-        g.fillStyle = grad;
+        // Taped seams with screw dimples.
+        g.fillStyle = 'rgba(200,196,182,0.6)';
+        g.fillRect(31, 0, 3, h);
+        g.fillStyle = 'rgba(60,50,35,0.35)';
+        g.fillRect(32, 0, 1, h);
+        g.fillStyle = 'rgba(70,60,45,0.5)';
+        for (let y = 4; y < h; y += 10) {
+          g.fillRect(2, y, 1, 1);
+          g.fillRect(29, y + 3, 1, 1);
+          g.fillRect(36, y, 1, 1);
+          g.fillRect(61, y + 3, 1, 1);
+        }
+        // Water stains bleeding down from the top.
+        for (let i = 0; i < 3; i++) {
+          const x = Math.floor(r() * w);
+          const len = 10 + r() * 30;
+          const grad = g.createLinearGradient(0, 0, 0, len);
+          grad.addColorStop(0, 'rgba(110,80,40,0.32)');
+          grad.addColorStop(1, 'rgba(110,80,40,0)');
+          g.fillStyle = grad;
+          g.fillRect(x, 0, 3 + Math.floor(r() * 6), len);
+        }
+        // Grime and mildew along the floor line.
+        const base = g.createLinearGradient(0, h, 0, h * 0.55);
+        base.addColorStop(0, 'rgba(40,45,25,0.6)');
+        base.addColorStop(1, 'rgba(40,45,25,0)');
+        g.fillStyle = base;
         g.fillRect(0, 0, w, h);
+        speckle(g, w, h, 70, 'rgba(50,40,25,0.35)', 43);
+        // Scuffs and a dent.
+        g.strokeStyle = 'rgba(40,35,30,0.4)';
+        for (let i = 0; i < 4; i++) {
+          const x = r() * w;
+          const y = h * 0.5 + r() * h * 0.4;
+          g.beginPath();
+          g.moveTo(x, y);
+          g.lineTo(x + 4 + r() * 6, y + (r() - 0.5) * 2);
+          g.stroke();
+        }
       }),
     ),
   /** Brushed stainless steel. */
@@ -166,15 +198,19 @@ export const tex = {
         }
       }),
     ),
-  /** Fluorescent ceiling panels. */
+  /** Unfinished basement ceiling: subfloor boards between joists. */
   ceiling: () =>
     cached('ceiling', () =>
       canvasTexture(32, 32, (g, w, h) => {
-        g.fillStyle = '#3a3830';
-        g.fillRect(0, 0, w, h);
-        g.strokeStyle = '#24221d';
-        g.strokeRect(0.5, 0.5, w - 1, h - 1);
-        speckle(g, w, h, 40, 'rgba(90,70,30,0.4)', 23);
+        const r = rng(23);
+        for (let x = 0; x < w; x += 8) {
+          const v = 70 + r() * 20;
+          g.fillStyle = `rgb(${v},${v * 0.8},${v * 0.55})`;
+          g.fillRect(x, 0, 8, h);
+          g.fillStyle = 'rgba(20,15,10,0.6)';
+          g.fillRect(x, 0, 1, h);
+        }
+        speckle(g, w, h, 40, 'rgba(20,15,10,0.4)', 29);
       }),
     ),
   /** Lettering on a sign. Not cached. */
