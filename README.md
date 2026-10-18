@@ -14,6 +14,8 @@ npm run build    # static site in dist/
 
 Desktop Chrome, Edge or Firefox with mouse and keyboard. Headphones recommended.
 
+Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **Settings > Pages > Source** to *Deploy from a branch*, branch `gh-pages`, folder `/ (root)`. It then lives at https://vonduzenstudios-create.github.io/HexKitchen/.
+
 | Input | Action |
 | --- | --- |
 | WASD + mouse | Move and look |
