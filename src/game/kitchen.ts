@@ -8,7 +8,41 @@ import type { IngredientKind } from './ingredients';
 
 export const COUNTER_TOP = 0.9;
 
-export type StationId = 'board' | 'prep' | 'pan' | 'pot' | 'fryer' | 'plateA' | 'plateB';
+export type StationId = 'board' | 'prep' | 'pan' | 'pot' | 'fryer' | 'oven' | 'plateA' | 'plateB';
+
+/** The hotel oven (Episode 2). Trays slide onto the rack; the door, light and clip-on timer are driven by the game. */
+export interface OvenRig {
+  group: THREE.Group;
+  /** Where a tray rests on the rack inside (centre of the tray's base). */
+  rack: THREE.Vector3;
+  /** Floor point in front of the oven where the cook stands; Gorgon's Service Inspection walks here. */
+  front: THREE.Vector3;
+  /** 0 closed .. 1 fully open (hinged at the bottom, drops forward). */
+  setDoor(open: number): void;
+  /** Interior light; glow 0..1 warms the window as food browns. */
+  setLight(on: boolean, glow: number): void;
+  /** Clip-on timer display: seconds left, or null to show "--:--". ready=true flashes it. */
+  setTimer(seconds: number | null, ready: boolean): void;
+}
+
+/** Episode 2 hotel set pieces. Behaviour lives in the game; the kitchen just builds and places them. */
+export interface HotelSet {
+  /** Spawn point (floor) of the rolling service trolley, and the trolley mesh (origin at floor centre, top shelf at trolleyTop). */
+  trolley: { group: THREE.Group; spawn: THREE.Vector3; size: THREE.Vector3; top: number; locks: THREE.Object3D[] };
+  /** Spring-loaded toaster on the counter: slot opening position and a lever you can animate (0 up .. 1 down). */
+  toaster: { group: THREE.Group; slot: THREE.Vector3; setLever(t: number): void; setRattle(t: number): void };
+  /** Desk bell on the pass (separate from the service bell used to serve). Clickable: userData.deskBell. */
+  deskBell: THREE.Vector3;
+  /** Ticket printer above the pass: where paper emerges, and a paper strip mesh to scale/extend. */
+  printer: { group: THREE.Group; mouth: THREE.Vector3; paper: THREE.Mesh };
+  /** Spots where sheet trays are stacked for the player to take. */
+  trayRack: THREE.Vector3[];
+  /** Petrified diners in the dining room beyond the hatch (head positions, for looking at / effects). */
+  diners: THREE.Vector3[];
+  /** Tall windows: call to change what's outside (0..1 "wrongness" for occasional reveals). */
+  setWindows(t: number, reveal: number): void;
+}
+
 
 export interface Bin {
   kind: IngredientKind;
@@ -33,6 +67,9 @@ export interface Kitchen {
   /** Trash can: centre of its base on the floor. */
   trash: THREE.Vector3;
   mirrorHook: THREE.Vector3;
+  /** Episode 2 only. */
+  oven?: OvenRig;
+  hotel?: HotelSet;
   /** Oven mitts hanging by the stove; hidden while you're wearing them. */
   mitts: THREE.Group;
   spawn: THREE.Vector3;
@@ -51,7 +88,7 @@ export interface Waypoints {
   edges: [string, string][];
 }
 
-function box(
+export function box(
   parent: THREE.Object3D,
   physics: Physics | null,
   center: [number, number, number],
@@ -68,7 +105,7 @@ function box(
 }
 
 /** A counter: cabinet body plus a slightly overhanging steel top. Collider covers both. */
-function counter(parent: THREE.Object3D, physics: Physics, x0: number, x1: number, z0: number, z1: number, body: THREE.Material, top: THREE.Material): void {
+export function counter(parent: THREE.Object3D, physics: Physics, x0: number, x1: number, z0: number, z1: number, body: THREE.Material, top: THREE.Material): void {
   const cx = (x0 + x1) / 2;
   const cz = (z0 + z1) / 2;
   const w = x1 - x0;
@@ -165,6 +202,8 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
     pan: new THREE.Vector3(0.15, COUNTER_TOP + 0.03, -3.6),
     pot: new THREE.Vector3(0.95, COUNTER_TOP, -3.6),
     fryer: new THREE.Vector3(1.85, COUNTER_TOP, -3.6),
+    // No working oven in the basement.
+    oven: new THREE.Vector3(0, -20, 0),
     plateA: new THREE.Vector3(3.35, COUNTER_TOP, -2.5),
     plateB: new THREE.Vector3(3.35, COUNTER_TOP, -1.4),
   };

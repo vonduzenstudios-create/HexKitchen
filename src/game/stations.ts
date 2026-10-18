@@ -70,7 +70,7 @@ const SLOT_LAYOUT: Record<number, [number, number][]> = {
 };
 
 export class Stations {
-  readonly occupant: Record<StationId, Item[]> = { board: [], prep: [], pan: [], pot: [], fryer: [], plateA: [], plateB: [] };
+  readonly occupant: Record<StationId, Item[]> = { board: [], prep: [], pan: [], pot: [], fryer: [], oven: [], plateA: [], plateB: [] };
   readonly plates: Record<PlateId, { ticket: Ticket | null; slots: Slot[] }> = {
     plateA: { ticket: null, slots: [] },
     plateB: { ticket: null, slots: [] },
@@ -566,6 +566,8 @@ export class Stations {
       case 'fryer':
         if (!item) return { title: 'Deep Fryer', hint: 'Drop chopped potato in to make fries', value: 0, max: 2 };
         return { title: `Deep-frying ${item.name}`, hint: 'Grab it out when golden', value: item.cook.deepfry, max: 2, zone: [0.78, 1.22] };
+      case 'oven':
+        return null;
       case 'plateA':
       case 'plateB': {
         const p = this.plates[id];
