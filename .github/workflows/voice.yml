@@ -1,0 +1,59 @@
+name: Generate Gorgon voice
+
+# Renders Gorgon's lines with ElevenLabs whenever the lines or the voice change, commits the
+# MP3s to public/voice, then dispatches the Pages workflow (pushes made with GITHUB_TOKEN don't trigger it).
+# Needs the repository secret ELEVENLABS_API_KEY and a voiceId in voice.config.json.
+on:
+  push:
+    branches: [main, claude/hex-kitchen-demo]
+    paths: [voice.config.json, src/game/lines.ts, scripts/generate-voice.mjs]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: voice-${{ github.ref }}
+
+jobs:
+  voice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check configuration
+        id: cfg
+        env:
+          KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          if [ -z "$KEY" ] || grep -q REPLACE_ME voice.config.json; then
+            echo "Skipping: add the ELEVENLABS_API_KEY secret and a voiceId in voice.config.json"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Render lines
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: node --experimental-strip-types scripts/generate-voice.mjs
+      - name: Commit audio
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          git add public/voice
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Regenerate Gorgon voice lines"
+          git push
+      - name: Redeploy Pages
+        if: steps.cfg.outputs.ready == 'true'
+        # Hand off to the Pages workflow so there's only ever one gh-pages deploy at a time,
+        # and it builds the branch head including the audio committed above.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref "${{ github.ref_name }}"

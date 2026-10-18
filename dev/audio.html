@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Hex Kitchen Audio Lab</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.4 system-ui, sans-serif; background: #15120f; color: #e8dcc8; margin: 0; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 8px; } h2 { font-size: 15px; margin: 18px 0 6px; color: #f0a050; }
+  button { background: #2c241c; color: #e8dcc8; border: 1px solid #5a4a3a; border-radius: 4px; padding: 5px 9px; margin: 2px; cursor: pointer; }
+  button:hover { background: #3c3024; } button.on { background: #6a3a1a; }
+  textarea { width: 100%; max-width: 800px; height: 60px; background: #221c16; color: #e8dcc8; border: 1px solid #5a4a3a; }
+  #log { white-space: pre-wrap; font: 12px monospace; color: #b8a890; max-width: 900px; }
+  label { margin-right: 12px; }
+</style>
+</head>
+<body>
+<h1>Hex Kitchen Audio Lab</h1>
+<p>Click <b>Init audio</b> first. Everything here is synthesised in code.</p>
+<button id="init">Init audio</button> <label>Master <input id="master" type="range" min="0" max="1.5" step="0.01" value="1" /></label>
+<label><input id="spatial" type="checkbox" /> spatialise SFX (random position)</label>
+<h2>SFX</h2><div id="sfx"></div>
+<h2>Loops</h2><div id="loops"></div>
+<h2>Music</h2><div id="music"></div>
+<label>Wrath intensity <input id="intensity" type="range" min="0" max="1" step="0.01" value="0" /></label>
+<div id="stings"></div>
+<h2>Voice</h2>
+<div id="lines"></div>
+<textarea id="text">This lamb is so RAW it's still bleating!</textarea><br />
+<label>growl <input id="growl" type="range" min="0" max="1" step="0.01" value="0.5" /></label>
+<label>pitch <input id="pitch" type="range" min="0.5" max="2" step="0.01" value="1" /></label>
+<label>rate <input id="rate" type="range" min="0.5" max="1.6" step="0.01" value="1" /></label>
+<button id="say">Say</button><button id="stop">Stop</button>
+<div id="log"></div>
+<script type="module" src="./audio-dev.ts"></script>
+</body>
+</html>
