@@ -31,9 +31,9 @@ const STEP_TEXT: Record<Step, (n: string) => string> = {
 const STEP_HINT: Record<Step, string> = {
   chop: 'Drop it on the board, hold click and swipe down on each beat',
   season: 'Drop it on the tray, hold click and shake the mouse until the bar is in the green',
-  fry: 'Drop it in the pan, hold click and flick up to flip. Take it out when both sides are golden',
-  boil: 'Drop it in the pot and grab it out when the bar reaches the green',
-  deepfry: 'Drop it in the fryer and grab it out when the bar reaches the green',
+  fry: 'Drop it in the pan, hold click and flick up to flip. Take it out when both sides are golden. Wear the oven mitts (hook by the stove) or you will drop it',
+  boil: 'Drop it in the pot. Put on the oven mitts, then grab it out when the bar reaches the green',
+  deepfry: 'Drop it in the fryer. Put on the oven mitts, then grab it out when the bar reaches the green',
 };
 
 function stepDone(c: CookState, step: Step): boolean {
@@ -70,6 +70,16 @@ export function buildObjectives(tickets: Ticket[], stations: Stations, items: It
     }
     const slots = stations.plates[t.plate].slots;
     const used = new Set<Item>();
+    {
+      const done = stations.hasPlate[t.plate];
+      const state: ObjectiveState = done ? 'done' : nextGiven ? 'todo' : 'next';
+      if (!done) nextGiven = true;
+      lines.push({
+        text: `Set a clean plate on ${plateName}`,
+        hint: state === 'next' ? `Plates are stacked at the back of the pass. Carry it gently, they smash. ${plateName} is the ${t.plate === 'plateA' ? 'back' : 'front'} spot` : undefined,
+        state,
+      });
+    }
     for (const comp of t.recipe.components) {
       const name = INGREDIENTS[comp.kind].name.toLowerCase();
       const onPlate = slots.find((s) => s.kind === comp.kind && s.item && !used.has(s.item))?.item ?? null;

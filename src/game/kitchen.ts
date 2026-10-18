@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { buildKnife } from '../characters/knife';
+import { buildMitt, buildPlate } from './plate';
 import { Physics } from '../engine/physics';
 import { mat, basic } from '../engine/psx';
 import { tex } from '../engine/textures';
@@ -21,7 +23,18 @@ export interface Kitchen {
   stations: Record<StationId, THREE.Vector3>;
   bins: Bin[];
   bell: THREE.Vector3;
+  /** The plate shown on each pass spot when one has been set down. */
+  passPlates: Record<'plateA' | 'plateB', THREE.Group>;
+  plateStack: THREE.Vector3;
+  /** Rickety storage shelf: bump into it at speed and everything on it comes down. */
+  shelf: { group: THREE.Group; front: THREE.Vector3; spots: THREE.Vector3[] };
+  /** Chef's knife resting beside the cutting board (hidden while it's in your hand). */
+  boardKnife: THREE.Object3D;
+  /** Trash can: centre of its base on the floor. */
+  trash: THREE.Vector3;
   mirrorHook: THREE.Vector3;
+  /** Oven mitts hanging by the stove; hidden while you're wearing them. */
+  mitts: THREE.Group;
   spawn: THREE.Vector3;
   judgeSpot: THREE.Vector3;
   rivalSpots: THREE.Vector3[];
@@ -164,6 +177,10 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
 
   // Cutting board.
   tag(box(root, null, [stations.board.x, COUNTER_TOP + 0.02, stations.board.z], [0.7, 0.04, 0.45], mWood), { station: 'board' });
+  const boardKnife = buildKnife();
+  boardKnife.rotation.set(0, Math.PI / 2 + 0.15, Math.PI / 2);
+  boardKnife.position.set(stations.board.x + 0.05, COUNTER_TOP + 0.046, stations.board.z + 0.17);
+  root.add(boardKnife);
   // Prep tray with shaker props.
   tag(box(root, null, [stations.prep.x, COUNTER_TOP + 0.01, stations.prep.z], [0.6, 0.02, 0.45], mat(0x3d5a7a)), { station: 'prep' });
   const shakerSalt = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.13, 6), mat(0xeeeeee));
@@ -218,18 +235,31 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
     box(root, null, [3.35, 1.71, z], [0.42, 0.02, 0.22], basic(0xff8a3a));
   }
   box(root, null, [3.35, 1.8, -1.95], [0.04, 0.04, 2.0], mDark);
-  const plateMat = mat(0xf4f1ea);
+  // Each pass spot has a rubber mat; a plate appears on it once you set one down from the stack.
+  const passPlates = {} as Record<'plateA' | 'plateB', THREE.Group>;
   for (const id of ['plateA', 'plateB'] as const) {
     const p = stations[id];
-    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.2, 0.025, 12), plateMat);
-    plate.position.set(p.x, COUNTER_TOP + 0.013, p.z);
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.008, 0.56), mat(0x1c1c1c, { roughness: 0.9 }));
+    pad.position.set(p.x, COUNTER_TOP + 0.004, p.z);
+    root.add(pad);
+    tag(pad, { station: id });
+    const plate = buildPlate();
+    plate.position.set(p.x, COUNTER_TOP + 0.008, p.z);
+    plate.visible = false;
+    plate.children.forEach((c) => tag(c, { station: id }));
     root.add(plate);
-    tag(plate, { station: id });
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.012, 3, 12), mat(0xd6c070));
-    rim.rotation.x = Math.PI / 2;
-    rim.position.set(p.x, COUNTER_TOP + 0.027, p.z);
-    root.add(rim);
+    passPlates[id] = plate;
   }
+  // Stack of clean plates at the back of the pass. Click it to take one.
+  const plateStack = new THREE.Vector3(3.35, COUNTER_TOP, -3.45);
+  for (let i = 0; i < 6; i++) {
+    const pl = buildPlate();
+    pl.position.set(plateStack.x, COUNTER_TOP + i * 0.026, plateStack.z);
+    pl.rotation.y = i * 0.7;
+    pl.children.forEach((c) => tag(c, { plateStack: true }));
+    root.add(pl);
+  }
+  physics.addCylinder({ x: plateStack.x, y: COUNTER_TOP + 0.08, z: plateStack.z }, 0.08, 0.24);
   // Service bell.
   const bell = new THREE.Vector3(3.35, COUNTER_TOP, -0.3);
   const bellG = new THREE.Group();
@@ -243,6 +273,53 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
   bellG.add(bellBase, bellDome, bellBtn);
   root.add(bellG);
   tag(bellDome, { bell: true });
+  // Rickety wire storage shelf against the west wall, south of the pantry.
+  const shelfG = new THREE.Group();
+  shelfG.position.set(-5.68, 0, 2.9);
+  const mWire = mat(0xb8bcc0, { roughness: 0.35, metalness: 0.8 });
+  for (const [dx, dz] of [[-0.2, -0.5], [-0.2, 0.5], [0.2, -0.5], [0.2, 0.5]]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 1.8, 10), mWire);
+    post.position.set(dx, 0.9, dz);
+    shelfG.add(post);
+  }
+  const shelfSpots: THREE.Vector3[] = [];
+  for (const y of [0.45, 0.95, 1.45]) {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.02, 1.04), mWire);
+    board.position.y = y;
+    shelfG.add(board);
+    physics.addBox({ x: shelfG.position.x, y, z: shelfG.position.z }, { x: 0.44, y: 0.02, z: 1.04 });
+    for (const dz of [-0.3, 0, 0.3]) shelfSpots.push(new THREE.Vector3(shelfG.position.x + 0.02, y + 0.12, shelfG.position.z + dz));
+  }
+  root.add(shelfG);
+  physics.addBox({ x: shelfG.position.x - 0.22, y: 0.9, z: shelfG.position.z }, { x: 0.04, y: 1.8, z: 1.04 });
+  const shelfSign = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.12), basic(0xffffff, { map: tex.sign('DO NOT LEAN', '#202020', '#e8c020', 128, 32) }));
+  shelfSign.position.set(shelfG.position.x + 0.23, 1.68, shelfG.position.z);
+  shelfSign.rotation.y = Math.PI / 2;
+  root.add(shelfSign);
+
+  // Trash can by the cutting board, for hiding dropped food before Gorgon sees it.
+  const trash = new THREE.Vector3(-4.5, 0, -2.95);
+  const trashG = new THREE.Group();
+  trashG.position.copy(trash);
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.22, 0.72, 24, 1, true), mat(0x3a4a3a, { roughness: 0.5, metalness: 0.4, side: THREE.DoubleSide }));
+  can.position.y = 0.36;
+  const canBottom = new THREE.Mesh(new THREE.CircleGeometry(0.22, 24), mat(0x1a1a1a));
+  canBottom.rotation.x = -Math.PI / 2;
+  canBottom.position.y = 0.02;
+  const canRim = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.018, 8, 24), mat(0x5a6a5a, { roughness: 0.4, metalness: 0.5 }));
+  canRim.rotation.x = Math.PI / 2;
+  canRim.position.y = 0.72;
+  const binBag = new THREE.Mesh(new THREE.CircleGeometry(0.24, 24), mat(0x111111, { roughness: 0.3 }));
+  binBag.rotation.x = -Math.PI / 2;
+  binBag.position.y = 0.55;
+  trashG.add(can, canBottom, canRim, binBag);
+  root.add(trashG);
+  [can, canRim, binBag].forEach((m) => tag(m, { trash: true }));
+  const trashSign = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.1), basic(0xffffff, { map: tex.sign('TRASH', '#e8e8e8', '#2a3a2a', 96, 28) }));
+  trashSign.position.set(trash.x, 0.45, trash.z + 0.255);
+  root.add(trashSign);
+  physics.addCylinder({ x: trash.x, y: 0.2, z: trash.z }, 0.2, 0.26);
+
   // Order rail with ticket clips above the pass.
   box(root, null, [3.0, 1.55, -1.95], [0.03, 0.04, 2.6], mSteel);
 
@@ -280,6 +357,19 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
   box(root, null, [-4.88, 1.2, -3.15], [0.04, 0.5, 0.05], mDark);
 
   // Mirror pan hook on the back wall, above the board.
+  // Oven mitts on a hook beside the stove hood.
+  const mitts = new THREE.Group();
+  mitts.position.set(-0.55, 1.2, -3.9);
+  for (const dx of [-0.07, 0.07]) {
+    const m = buildMitt();
+    m.position.x = dx;
+    m.rotation.set(Math.PI, 0, dx * 1.5);
+    m.position.y = 0.27;
+    mitts.add(m);
+  }
+  box(root, null, [mitts.position.x, mitts.position.y + 0.3, -3.98], [0.05, 0.05, 0.08], mDark);
+  mitts.traverse((o) => (o as THREE.Mesh).isMesh && tag(o, { mitts: true }));
+  root.add(mitts);
   const mirrorHook = new THREE.Vector3(-3.55, 1.45, -3.92);
   box(root, null, [mirrorHook.x, mirrorHook.y + 0.32, -3.98], [0.05, 0.05, 0.08], mDark);
 
@@ -402,7 +492,13 @@ export function buildKitchen(scene: THREE.Scene, physics: Physics, ingredientMes
     stations,
     bins,
     bell,
+    shelf: { group: shelfG, front: new THREE.Vector3(shelfG.position.x + 0.5, 0, shelfG.position.z), spots: shelfSpots },
+    passPlates,
+    plateStack,
+    boardKnife,
+    trash,
     mirrorHook,
+    mitts,
     spawn: new THREE.Vector3(-1.0, 0, -2.2),
     judgeSpot: waypoints.nodes.judge,
     rivalSpots: [new THREE.Vector3(-2.8, 0, 3.15), new THREE.Vector3(-0.6, 0, 3.15), new THREE.Vector3(1.6, 0, 3.15)],

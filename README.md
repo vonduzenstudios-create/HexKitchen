@@ -26,6 +26,9 @@ Pushes to `main` publish the game to the `gh-pages` branch. To serve it, set **S
 | Space or C | Crouch behind counters for cover |
 | E | Serve the plate you're looking at, or every plate when near the pass |
 | Q | Drop what you're holding |
+| F | Take off the oven mitts (needed for hot pans, pots and the fryer; clumsy for chopping) |
+| Hold click with the extinguisher | Spray it at a fire |
+| Plating Mode | Mouse moves the cursor; click picks up and sets down, scroll rotates, right-click or 1-4 switches tool (arrange, sauce, garnish, wipe), Shift for fine control, E to finish |
 
 ## The episode
 
@@ -36,6 +39,12 @@ The **What to do** list on the right walks you through each dish one step at a t
 | 1. The Appetizer | 4:00 | Cursed Caesar: chop and season lettuce, chop bread into croutons |
 | 2. Dinner Rush | 6:00 | Steak & Fries (season and pan-fry the steak, chop and deep-fry potato) and Spaghetti Pomodoro (boil pasta, dice tomato) at the same time |
 | 3. The Final Judgment | 5:00 | Medusa Wellington: season and sear beef, chop mushrooms, boil green beans. Gorgon tastes it and decides your fate |
+
+**Plating Mode.** Serving a complete dish opens a short close-up where you arrange the components, swipe one stroke of sauce, add a pinch of garnish and wipe the rim before the timer runs out. The plating grade (Cafeteria up to Gorgon Approved) counts for 20% of the dish score.
+
+**Chaos.** Dropped plates shatter, an unattended pan or fryer catches fire and spreads along the counter (use the extinguisher), sprinting into the rickety shelf knocks its ingredients everywhere, and grabbing hot food without oven mitts burns you.
+
+**Wrath stages** (Calm, Irritated, Furious, Petrifying Rage) change how Gorgon behaves: he hears loud noises from further away, walks over to investigate, and loses it if he finds a mess. His gaze always gets a warning ring around the crosshair: hide, look away or reflect it.
 
 **Gorgon's Wrath** rises with bad dishes, burnt food, dropped food and fires, and makes his interruptions more frequent. **Petrification** rises when you fail dishes or meet his gaze; at 100% you become a statue. Perfect dishes calm him and chip the stone away.
 

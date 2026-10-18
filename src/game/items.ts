@@ -5,8 +5,9 @@ import { canvasTexture } from '../engine/textures';
 import { INGREDIENTS, type IngredientKind } from './ingredients';
 import { freshCookState, type CookState } from './recipes';
 import type { StationId } from './kitchen';
+import { buildExtinguisher, buildPlate } from './plate';
 
-export type ItemKind = IngredientKind | 'mirrorPan';
+export type ItemKind = IngredientKind | 'mirrorPan' | 'plate' | 'extinguisher';
 export type ItemWhere = 'world' | 'held' | 'station' | 'hook' | 'gone';
 
 const BURNT = new THREE.Color(0x1a1410);
@@ -62,7 +63,7 @@ export class Item {
     private physics: Physics,
     pos: THREE.Vector3,
   ) {
-    this.visual = kind === 'mirrorPan' ? buildMirrorPan() : INGREDIENTS[kind].whole();
+    this.visual = kind === 'mirrorPan' ? buildMirrorPan() : kind === 'plate' ? buildPlate() : kind === 'extinguisher' ? buildExtinguisher() : INGREDIENTS[kind].whole();
     this.group.add(this.visual);
     this.group.position.copy(pos);
     this.tagMeshes();
@@ -76,12 +77,14 @@ export class Item {
   }
 
   get isIngredient(): boolean {
-    return this.kind !== 'mirrorPan';
+    return this.kind !== 'mirrorPan' && this.kind !== 'plate' && this.kind !== 'extinguisher';
   }
 
   get name(): string {
     if (this.kind === 'mirrorPan') return 'Polished Pan';
-    const d = INGREDIENTS[this.kind];
+    if (this.kind === 'plate') return 'Clean Plate';
+    if (this.kind === 'extinguisher') return 'Fire Extinguisher';
+    const d = INGREDIENTS[this.kind as IngredientKind];
     return this.cook.chopped ? d.choppedName : d.name;
   }
 
@@ -99,7 +102,7 @@ export class Item {
     const center = box.getCenter(new THREE.Vector3()).sub(this.group.position);
     const desc = RAPIER.ColliderDesc.cuboid(Math.max(0.02, size.x / 2), Math.max(0.012, size.y / 2), Math.max(0.02, size.z / 2))
       .setTranslation(center.x, center.y, center.z)
-      .setDensity(this.kind === 'mirrorPan' ? 2.5 : 0.8)
+      .setDensity(this.kind === 'mirrorPan' ? 2.5 : this.kind === 'plate' ? 2 : 0.8)
       .setFriction(0.9)
       .setRestitution(0.15)
       .setCollisionGroups(groups(GROUP.ITEM, GROUP.STATIC | GROUP.ITEM | GROUP.STATUE | GROUP.PLAYER));
@@ -108,12 +111,12 @@ export class Item {
 
   /** Swap to the chopped mesh and refit the collider. */
   setChopped(): void {
-    if (this.kind === 'mirrorPan' || this.cook.chopped) return;
+    if (!this.isIngredient || this.cook.chopped) return;
     this.cook.chopped = true;
     const rot = this.group.quaternion.clone();
     this.group.quaternion.identity();
     this.group.remove(this.visual);
-    this.visual = INGREDIENTS[this.kind].chopped();
+    this.visual = INGREDIENTS[this.kind as IngredientKind].chopped();
     this.group.add(this.visual);
     this.tagMeshes();
     this.physics.world.removeCollider(this.collider, false);
@@ -129,8 +132,8 @@ export class Item {
   }
 
   refreshTint(): void {
-    if (this.kind === 'mirrorPan') return;
-    const cooked = new THREE.Color(INGREDIENTS[this.kind].cooked);
+    if (!this.isIngredient) return;
+    const cooked = new THREE.Color(INGREDIENTS[this.kind as IngredientKind].cooked);
     const lvl = this.cookLevel();
     for (const m of this.tints) {
       const mm = m.material as THREE.MeshStandardMaterial;

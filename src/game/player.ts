@@ -22,8 +22,15 @@ export class Player {
   private vy = 0;
   private bob = 0;
   shake = 0;
+  /** 0..1: petrified and toppling over like a statue (camera rolls and drops to the floor). */
+  topple = 0;
+  /** Horizontal speed last frame, m/s. */
+  speed = 0;
   /** Optional override: smoothly turn to face this point (used by cutscenes). */
   faceTarget: THREE.Vector3 | null = null;
+  /** Optional override: fly the camera to this pose (Plating Mode close-up). */
+  cameraOverride: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
+  private overrideBlend = 0;
 
   constructor(
     physics: Physics,
@@ -106,6 +113,8 @@ export class Player {
     this.body.setNextKinematicTranslation({ x: t.x + m.x, y: t.y + m.y, z: t.z + m.z });
 
     const horiz = Math.hypot(m.x, m.z) / Math.max(dt, 1e-4);
+    // Keep the recent peak so a collision that stops you dead still registers how fast you were going.
+    this.speed = Math.max(horiz, this.speed - dt * 12);
     this.bob += horiz * dt * 7;
     const p = this.position;
     this.shake = Math.max(0, this.shake - dt * 2.5);
@@ -116,5 +125,23 @@ export class Player {
       p.z + (Math.random() - 0.5) * sh,
     );
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    if (this.topple > 0) {
+      // Ease-in: a slow lean, then a fast fall.
+      const k = this.topple * this.topple * this.topple;
+      this.camera.position.y -= k * (this.eyeHeight - 0.35);
+      this.camera.rotation.z = k * 1.4;
+    }
+    // Plating close-up: blend from the eye to the override pose and back.
+    this.overrideBlend = THREE.MathUtils.clamp(this.overrideBlend + (this.cameraOverride ? dt : -dt) * 3.5, 0, 1);
+    if (this.overrideBlend > 0 && (this.cameraOverride || this.lastOverride)) {
+      const o = this.cameraOverride ?? this.lastOverride!;
+      const k = this.overrideBlend * this.overrideBlend * (3 - 2 * this.overrideBlend);
+      const fromQ = this.camera.quaternion.clone();
+      const toQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(o.pos, o.look, new THREE.Vector3(0, 1, 0)));
+      this.camera.position.lerp(o.pos, k);
+      this.camera.quaternion.copy(fromQ.slerp(toQ, k));
+    }
+    if (this.cameraOverride) this.lastOverride = this.cameraOverride;
   }
+  private lastOverride: { pos: THREE.Vector3; look: THREE.Vector3 } | null = null;
 }

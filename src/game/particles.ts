@@ -14,6 +14,8 @@ export interface EmitOpts {
   life?: number;
   size?: number;
   jitter?: number;
+  /** Extra velocity added to every particle (sprays, jets). */
+  push?: THREE.Vector3Like;
 }
 
 export class Particles {
@@ -54,6 +56,11 @@ export class Particles {
       this.vel[i * 3] = (Math.random() - 0.5) * sp * spread * 2;
       this.vel[i * 3 + 1] = (o.up ?? 0.5) * (0.6 + Math.random() * 0.8);
       this.vel[i * 3 + 2] = (Math.random() - 0.5) * sp * spread * 2;
+      if (o.push) {
+        this.vel[i * 3] += o.push.x;
+        this.vel[i * 3 + 1] += o.push.y;
+        this.vel[i * 3 + 2] += o.push.z;
+      }
       this.grav[i] = o.gravity ?? 0;
       const l = (o.life ?? 1) * (0.7 + Math.random() * 0.6);
       this.life[i] = l;

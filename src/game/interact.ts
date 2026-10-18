@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { audio } from '../audio';
 import type { HandsPose, HandsRig } from '../characters/hands';
+import { buildKnife } from '../characters/knife';
+import { buildMitt } from './plate';
 import type { Input } from '../engine/input';
 import type { IngredientKind } from './ingredients';
 import type { Item, Items } from './items';
@@ -13,12 +15,19 @@ export type Target =
   | { type: 'station'; id: StationId; point: THREE.Vector3 }
   | { type: 'bin'; kind: IngredientKind; point: THREE.Vector3 }
   | { type: 'bell'; point: THREE.Vector3 }
+  | { type: 'trash'; point: THREE.Vector3 }
+  | { type: 'plateStack'; point: THREE.Vector3 }
+  | { type: 'mitts'; point: THREE.Vector3 }
   | { type: 'hook'; point: THREE.Vector3 };
 
 export interface InteractEvents {
   serve(plates: PlateId[]): void;
   grabbed(item: Item): void;
   thrown(item: Item, speed: number): void;
+  binned(item: Item): void;
+  burnedHand(item: Item): void;
+  /** Holding the extinguisher with the button down: spray from `from` along `dir`. */
+  spray(from: THREE.Vector3, dir: THREE.Vector3, dt: number): void;
 }
 
 const REACH = 2.4;
@@ -39,6 +48,11 @@ export class Interaction {
   private hasHoldPos = false;
   private action = 0;
   private time = 0;
+  /** Wearing oven mitts: hot food is safe to grab, but chopping gets clumsy. */
+  wearingMitts = false;
+  private mittMeshes: THREE.Object3D[] = [];
+  /** Knife that appears in the right hand while chopping. */
+  private knife = buildKnife();
 
   constructor(
     private player: Player,
@@ -49,6 +63,18 @@ export class Interaction {
     private events: InteractEvents,
   ) {
     this.raycaster.far = REACH;
+    this.knife.visible = false;
+    this.hands.rightGrip.add(this.knife);
+    for (const grip of [this.hands.rightGrip, this.hands.leftGrip]) {
+      if (!grip) continue;
+      const m = buildMitt();
+      m.scale.setScalar(0.85);
+      m.rotation.x = Math.PI / 2;
+      m.position.set(0, 0.0, 0.06);
+      m.visible = false;
+      grip.add(m);
+      this.mittMeshes.push(m);
+    }
   }
 
   private pick(): Target | null {
@@ -63,11 +89,14 @@ export class Interaction {
         return { type: 'item', item: it, point: h.point, station: it.where === 'station' ? it.station : null };
       }
       let o: THREE.Object3D | null = h.object;
-      while (o && !o.userData.station && !o.userData.bin && !o.userData.bell) o = o.parent;
+      while (o && !o.userData.station && !o.userData.bin && !o.userData.bell && !o.userData.trash && !o.userData.plateStack && !o.userData.mitts) o = o.parent;
       if (!o) continue;
       if (o.userData.station) return { type: 'station', id: o.userData.station, point: h.point };
       if (o.userData.bin) return { type: 'bin', kind: o.userData.bin, point: h.point };
       if (o.userData.bell) return { type: 'bell', point: h.point };
+      if (o.userData.trash) return { type: 'trash', point: h.point };
+      if (o.userData.plateStack) return { type: 'plateStack', point: h.point };
+      if (o.userData.mitts) return { type: 'mitts', point: h.point };
     }
     // The empty hook is a tiny target, so test it by angle when holding the mirror pan.
     if (this.held?.kind === 'mirrorPan') {
@@ -85,6 +114,20 @@ export class Interaction {
   }
 
   grab(item: Item): void {
+    const from = item.where === 'station' ? item.station : null;
+    const hot = from === 'pan' || from === 'pot' || from === 'fryer';
+    if (hot && !this.wearingMitts) {
+      // Barehanded into a hot pan: yelp, and it goes flying.
+      this.stations.take(item);
+      item.where = 'world';
+      item.setKinematic(false);
+      const f = this.player.forward();
+      item.body.setLinvel({ x: f.x * -1.2 + (Math.random() - 0.5), y: 2.2, z: f.z * -1.2 + (Math.random() - 0.5) }, true);
+      item.body.setAngvel({ x: Math.random() * 10, y: Math.random() * 10, z: Math.random() * 10 }, true);
+      this.player.shake = Math.max(this.player.shake, 0.5);
+      this.events.burnedHand(item);
+      return;
+    }
     this.stations.take(item);
     item.where = 'held';
     item.setKinematic(true);
@@ -174,7 +217,13 @@ export class Interaction {
           this.action = this.stations.work(this.working, input, dt);
         }
       } else if (input.lmbPressed) {
-        if (this.held) {
+        if (this.held?.kind === 'extinguisher') {
+          // Clicking sprays (handled below); Q puts it down.
+        } else if (this.held && t?.type === 'trash' && this.held.kind !== 'mirrorPan') {
+          const it = this.held;
+          this.held = null;
+          this.events.binned(it);
+        } else if (this.held) {
           if (!this.releaseInto()) this.drop();
         } else if (t) {
           if (t.type === 'item') {
@@ -191,6 +240,12 @@ export class Interaction {
             const cam = this.player.camera;
             const it = this.items.spawn(t.kind, cam.position.clone().add(this.player.forward().multiplyScalar(0.5)));
             this.grab(it);
+          } else if (t.type === 'mitts') {
+            this.setMitts(true);
+          } else if (t.type === 'plateStack') {
+            const it = this.items.spawn('plate', this.kitchen.plateStack.clone().setY(1.2));
+            this.grab(it);
+            audio.play('plate', { volume: 0.5, pitch: 1.2 });
           } else if (t.type === 'bell') {
             audio.play('bell', { pos: this.kitchen.bell });
             this.events.serve(['plateA', 'plateB']);
@@ -208,6 +263,11 @@ export class Interaction {
         }
       }
       if (input.wasPressed('KeyQ') && this.held) this.drop();
+      if (input.wasPressed('KeyF') && this.wearingMitts) this.setMitts(false);
+      if (this.held?.kind === 'extinguisher' && input.lmb) {
+        const nozzle = this.holdPos.clone().addScaledVector(this.player.forward(), 0.12);
+        this.events.spray(nozzle, this.player.forward(), dt);
+      }
     }
 
     // Mirror pan.
@@ -221,6 +281,14 @@ export class Interaction {
     this.updateHeld(dt);
     this.updateHands(dt);
     this.prompt = enabled ? this.makePrompt() : '';
+  }
+
+  setMitts(on: boolean): void {
+    this.wearingMitts = on;
+    this.stations.mittsOn = on;
+    this.kitchen.mitts.visible = !on;
+    for (const m of this.mittMeshes) m.visible = on;
+    audio.play('pickup', { volume: 0.5, pitch: on ? 0.7 : 0.9 });
   }
 
   /** Seconds since the mirror was raised, or Infinity if it is down. */
@@ -277,6 +345,9 @@ export class Interaction {
     else if (this.held) pose = 'hold';
     else if (this.pending) pose = 'reach';
     else if (this.player.crouch > 0.6) pose = 'cover';
+    // Chopping swaps the knife from the board into your hand.
+    this.knife.visible = pose === 'chop';
+    this.kitchen.boardKnife.visible = pose !== 'chop';
     this.hands.update(dt, pose, action === undefined ? undefined : { action });
     this.action *= 0.85;
   }
@@ -285,10 +356,17 @@ export class Interaction {
     const t = this.target;
     if (this.working) return '';
     if (this.held) {
+      if (this.held.kind === 'extinguisher') return 'Hold click: spray at the fire  ·  Q: put it down';
       if (!t) return `Holding ${this.held.name}  ·  Click: drop / flick to throw${this.held.kind === 'mirrorPan' ? '  ·  Right-click: raise mirror' : ''}`;
       if (t.type === 'hook' && this.held.kind === 'mirrorPan') return 'Click: hang the pan back up';
+      if (t.type === 'trash' && this.held.kind !== 'mirrorPan') return `Click: bin the ${this.held.name}`;
       const st = this.targetStation(t);
-      if (st) return this.stations.canPlace(st, this.held) ? `Click: place ${this.held.name}` : 'That spot is full';
+      if (st) {
+        if (this.stations.canPlace(st, this.held)) return `Click: place ${this.held.name}`;
+        if (this.stations.isBurning(st)) return "It's ON FIRE! Grab the extinguisher by the stove";
+        if ((st === 'plateA' || st === 'plateB') && !this.stations.hasPlate[st]) return 'Put a clean plate here first (stack at the back of the pass)';
+        return 'That spot is full';
+      }
       return `Holding ${this.held.name}  ·  Click: drop`;
     }
     if (!t) return '';
@@ -296,13 +374,16 @@ export class Interaction {
       case 'item': {
         if (t.station && WORKABLE.includes(t.station) && this.isWorkable(t.station, t.item)) {
           const verb = t.station === 'board' ? 'chop' : t.station === 'prep' ? 'season' : 'flip';
+          if (t.station === 'board' && this.wearingMitts) return `Hold click: chop (clumsy in mitts! F: take them off)  ·  Tap: take ${t.item.name}`;
           return `Hold click: ${verb}  ·  Tap: take ${t.item.name}`;
         }
         if (t.station === 'plateA' || t.station === 'plateB') return `Click: take ${t.item.name}  ·  E: serve plate`;
+        if ((t.station === 'pan' || t.station === 'pot' || t.station === 'fryer') && !this.wearingMitts) return `HOT! Put on the oven mitts by the stove first  ·  Click: grab ${t.item.name} anyway`;
         return `Click: grab ${t.item.name}`;
       }
       case 'station':
-        if (t.id === 'plateA' || t.id === 'plateB') return 'E: serve this plate';
+        if (this.stations.isBurning(t.id)) return "ON FIRE! The extinguisher is on the counter by the stove";
+        if (t.id === 'plateA' || t.id === 'plateB') return this.stations.hasPlate[t.id] ? 'E: serve this plate' : 'Needs a plate: grab one from the stack';
         return '';
       case 'bin':
         return `Click: take ${t.kind === 'pasta' ? 'spaghetti' : t.kind === 'greens' ? 'green beans' : t.kind}`;
@@ -310,6 +391,12 @@ export class Interaction {
         return 'Click: ring the bell to serve all plates';
       case 'hook':
         return '';
+      case 'trash':
+        return 'Trash: bin dropped food here before Gorgon finds it';
+      case 'mitts':
+        return 'Click: put on oven mitts (needed for hot pans and pots)';
+      case 'plateStack':
+        return 'Click: take a clean plate (careful, they break)';
     }
   }
 }

@@ -3,6 +3,23 @@
 
 export type LineKey =
   | 'intro'
+  | 'whatWasThat'
+  | 'burnedHand'
+  | 'fireSpread'
+  | 'plateSmash'
+  | 'platingRim'
+  | 'platingSauce'
+  | 'platingClutter'
+  | 'platingBalance'
+  | 'platingHurry'
+  | 'platingGood'
+  | 'platingStart'
+  | 'platingGreat'
+  | 'platingBad'
+  | 'investigateNothing'
+  | 'stageIrritated'
+  | 'stageFurious'
+  | 'stageRage'
   | 'round1'
   | 'round2'
   | 'round3'
@@ -43,6 +60,75 @@ export type LineKey =
   | 'emptyPlate';
 
 export const LINES: Record<LineKey, string[]> = {
+  platingStart: [
+    "Right. PLATE it. Make it look like food, not a crime scene.",
+    "Presentation! People eat with their eyes first, you donkey!",
+  ],
+  platingRim: [
+    "THAT RIM IS FILTHY! Wipe it!",
+    "Look at the edge of that plate! Clean it!",
+  ],
+  platingSauce: [
+    "DON'T DROWN IT IN SAUCE!",
+    "One swipe of sauce! ONE! Not a finger painting!",
+  ],
+  platingClutter: [
+    "LESS IS MORE, YOU DONKEY!",
+    "It's all piled on top of itself! Give it some room!",
+  ],
+  platingBalance: [
+    "WHY IS EVERYTHING ON ONE SIDE?",
+    "Put the star of the dish in the MIDDLE!",
+  ],
+  platingHurry: [
+    "Hurry UP! It's going COLD!",
+    "Service! SERVICE! Get it on the pass!",
+  ],
+  platingGood: [
+    "Hmm. Keep going. Don't ruin it.",
+    "That's... not terrible. Finish it.",
+  ],
+  platingGreat: [
+    "Now THAT is a plate. Gorgon approved.",
+    "Beautiful. Finally. Was that so hard?",
+  ],
+  platingBad: [
+    "IT LOOKS LIKE IT FELL DOWN THE STAIRS!",
+    "That's not plating, that's a cafeteria tray!",
+  ],
+  plateSmash: [
+    "That's a PLATE! Do you know what plates COST?",
+    "Smashing plates? This isn't a Greek wedding!",
+  ],
+  fireSpread: [
+    "It's SPREADING! Grab the extinguisher, you muppet!",
+    "My kitchen is ON FIRE! The red thing! By the stove! USE IT!",
+  ],
+  burnedHand: [
+    "Bare hands in a hot pan? Mitts! MITTS! They're right there!",
+    "Ha! Now you know why we wear oven mitts, you donkey.",
+  ],
+  whatWasThat: [
+    "WHAT was THAT?",
+    "Oi! What did you just DROP?",
+    "I HEARD that! Don't you DARE hide it!",
+  ],
+  investigateNothing: [
+    "Hm. Nothing. Don't play games with me.",
+    "Throwing things to distract me? Cheeky. And noted.",
+  ],
+  stageIrritated: [
+    "Right. Now I'm irritated. Pick it UP!",
+    "You're starting to get on my nerves.",
+  ],
+  stageFurious: [
+    "That's it. I am FURIOUS!",
+    "My snakes are hissing. That's never good, is it?",
+  ],
+  stageRage: [
+    "Look at me. LOOK AT ME! Actually, don't...",
+    "I'm going to turn this whole kitchen to STONE!",
+  ],
   intro: [
     "Welcome to HEX Kitchen. Three rounds. One survivor. Everyone else becomes DECOR.",
   ],

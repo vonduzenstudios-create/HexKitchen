@@ -43,6 +43,8 @@ export interface StationEvents {
   flipFail(item: Item): void;
   burning(item: Item): void;
   fire(station: StationId): void;
+  fireSpread(station: StationId): void;
+  fireOut(station: StationId): void;
   shakerLid(item: Item): void;
 }
 
@@ -73,7 +75,13 @@ export class Stations {
     plateA: { ticket: null, slots: [] },
     plateB: { ticket: null, slots: [] },
   };
+  /** Whether a clean plate has been set down on each pass spot. */
+  readonly hasPlate: Record<PlateId, boolean> = { plateA: false, plateB: false };
   fireAt: StationId | null = null;
+  /** Oven mitts on: every cut lands off the beat. */
+  mittsOn = false;
+  /** Burning stations and their intensity 0..1. Fires keep going without fuel and spread along the line. */
+  readonly fires = new Map<StationId, { level: number; age: number; light: THREE.PointLight }>();
   private loops: Partial<Record<'sizzle' | 'boil' | 'fryer' | 'fire', LoopHandle>> = {};
   private time = 0;
   private dyHist: number[] = [0, 0, 0];
@@ -82,6 +90,9 @@ export class Stations {
   private lastDxSign = 0;
   private shakeSoundCd = 0;
   private burnWarned = new Set<number>();
+  /** Slices peeled off an ingredient as it's being chopped, cleared when it becomes chopped. */
+  private slices = new Map<number, THREE.Mesh[]>();
+  private chopStreak = 0;
 
   constructor(
     private scene: THREE.Scene,
@@ -118,12 +129,31 @@ export class Stations {
   }
 
   canPlace(id: StationId, item: Item): boolean {
+    const isPlate = id === 'plateA' || id === 'plateB';
+    if (item.kind === 'plate') return isPlate && !this.hasPlate[id as PlateId];
+    if (this.fires.has(id)) return false;
     if (!item.isIngredient) return false;
+    // Food goes on a plate, not on the bare pass.
+    if (isPlate && !this.hasPlate[id as PlateId]) return false;
     return !this.isFull(id);
+  }
+
+  /** Show or clear the plate on a pass spot. */
+  setPlate(id: PlateId, on: boolean): void {
+    this.hasPlate[id] = on;
+    this.kitchen.passPlates[id].visible = on;
+    for (const s of this.plates[id].slots) s.ghost.visible = on && !s.item;
   }
 
   /** Put an item into a station. aim is where the crosshair hit, for plating accuracy. */
   place(id: StationId, item: Item, aim?: THREE.Vector3): void {
+    if (item.kind === 'plate') {
+      // The carried plate becomes the pass's plate.
+      this.items.remove(item);
+      this.setPlate(id as PlateId, true);
+      audio.play('plate', { pos: this.kitchen.stations[id], volume: 0.9, pitch: 0.8 });
+      return;
+    }
     item.where = 'station';
     item.station = id;
     item.setKinematic(true);
@@ -181,7 +211,7 @@ export class Stations {
         s.ghost.visible = true;
       }
     }
-    if (this.fireAt === id) this.fireAt = null;
+    if (id === 'board') this.clearSlices(item);
     item.station = null;
     item.where = 'world';
   }
@@ -204,6 +234,7 @@ export class Stations {
       // The pass is approached from -X, so lay slots out in the plate's local frame accordingly.
       const offset = new THREE.Vector3(z, 0, -x);
       ghost.position.set(base.x + offset.x, COUNTER_TOP + 0.03, base.z + offset.z);
+      ghost.visible = this.hasPlate[plate];
       this.scene.add(ghost);
       p.slots.push({ kind: c.kind, offset, item: null, placement: 0, ghost });
     });
@@ -221,6 +252,8 @@ export class Stations {
       this.take(it);
       this.items.remove(it);
     }
+    // The plate goes out with the dish.
+    this.setPlate(plate, false);
     return out;
   }
 
@@ -278,23 +311,12 @@ export class Stations {
         this.burnWarned.add(panItem.id);
         this.events.burning(panItem);
       }
-      if (lvl > 2.0 && this.fireAt !== 'pan') {
-        this.fireAt = 'pan';
-        audio.play('fireIgnite', { pos: s.pan });
-        this.events.fire('pan');
-      }
+      if (lvl > 2.0 && !this.fires.has('pan')) this.ignite('pan');
       this.loops.sizzle?.setVolume(0.55 + Math.min(0.4, lvl * 0.2));
     } else {
       this.loops.sizzle?.setVolume(0);
     }
-    if (this.fireAt === 'pan' && panItem) {
-      for (let i = 0; i < 3; i++) this.particles.emit(s.pan.clone().setY(s.pan.y + 0.12), { color: Math.random() < 0.5 ? 0xff7a10 : 0xffd040, count: 1, up: 1.1, speed: 0.15, life: 0.5, jitter: 0.12 });
-      this.particles.emit(s.pan.clone().setY(s.pan.y + 0.5), { color: 0x222222, count: 1, up: 0.6, speed: 0.1, life: 2 });
-      this.loops.fire?.setVolume(0.8);
-    } else {
-      if (this.fireAt === 'pan') this.fireAt = null;
-      this.loops.fire?.setVolume(0);
-    }
+    this.updateFires(dt);
 
     // Pot and fryer.
     const potItem = this.occupant.pot[0];
@@ -319,11 +341,102 @@ export class Stations {
         this.burnWarned.add(fryItem.id);
         this.events.burning(fryItem);
       }
+      if (fryItem.cook.deepfry > 2.2 && !this.fires.has('fryer')) this.ignite('fryer');
     }
     this.loops.fryer?.setVolume(fryItem ? 0.6 : 0.05);
 
     // Plate ghost markers bob gently so players notice them.
     for (const p of Object.values(this.plates)) for (const sl of p.slots) sl.ghost.position.y = COUNTER_TOP + 0.03 + Math.sin(this.time * 3) * 0.004;
+  }
+
+  ignite(id: StationId, spread = false): void {
+    if (this.fires.has(id)) return;
+    const light = new THREE.PointLight(0xff7020, 0, 3.5, 1.6);
+    light.position.copy(this.kitchen.stations[id]).setY(this.kitchen.stations[id].y + 0.35);
+    this.scene.add(light);
+    this.fires.set(id, { level: spread ? 0.35 : 0.5, age: 0, light });
+    this.fireAt = id;
+    audio.play('fireIgnite', { pos: this.kitchen.stations[id], volume: 1 });
+    if (spread) this.events.fireSpread(id);
+    else this.events.fire(id);
+  }
+
+  /** Spray from the extinguisher reduces a fire's intensity; returns true if it went out. */
+  douse(id: StationId, amount: number): boolean {
+    const f = this.fires.get(id);
+    if (!f) return false;
+    f.level -= amount;
+    if (f.level > 0) return false;
+    this.scene.remove(f.light);
+    this.fires.delete(id);
+    if (this.fireAt === id) this.fireAt = this.fires.keys().next().value ?? null;
+    audio.play('splash', { pos: this.kitchen.stations[id], volume: 0.7, pitch: 0.6 });
+    this.events.fireOut(id);
+    return true;
+  }
+
+  isBurning(id: StationId): boolean {
+    return this.fires.has(id);
+  }
+
+  private updateFires(dt: number): void {
+    const LINE: StationId[] = ['board', 'prep', 'pan', 'pot', 'fryer'];
+    let loudest = 0;
+    for (const [id, f] of this.fires) {
+      f.age += dt;
+      f.level = Math.min(1, f.level + dt * 0.06);
+      const at = this.kitchen.stations[id];
+      const n = Math.ceil(f.level * 4);
+      for (let i = 0; i < n; i++)
+        this.particles.emit(at.clone().setY(at.y + 0.12), { color: Math.random() < 0.5 ? 0xff7a10 : 0xffd040, count: 1, up: 0.8 + f.level * 1.2, speed: 0.15, life: 0.5, jitter: 0.12 + f.level * 0.15 });
+      if (Math.random() < dt * 4) this.particles.emit(at.clone().setY(at.y + 0.5 + f.level * 0.4), { color: 0x222222, count: 1, up: 0.6, speed: 0.1, life: 2 });
+      f.light.intensity = (1.5 + f.level * 4) * (0.8 + Math.random() * 0.4);
+      // Whatever sits in a burning station chars.
+      for (const it of this.occupant[id]) if (it.isIngredient) {
+        it.cook.fry[0] += dt * 0.3;
+        it.cook.fry[1] += dt * 0.3;
+        it.cook.deepfry += dt * 0.3;
+        it.refreshTint();
+      }
+      // A big fire left alone jumps to the next station along the line.
+      if (f.level > 0.7 && f.age > 9) {
+        f.age = 0;
+        const i = LINE.indexOf(id);
+        const next = [LINE[i - 1], LINE[i + 1]].filter((x): x is StationId => !!x && !this.fires.has(x));
+        if (next.length) this.ignite(next[Math.floor(Math.random() * next.length)], true);
+      }
+      loudest = Math.max(loudest, f.level);
+    }
+    this.loops.fire?.setVolume(loudest > 0 ? 0.5 + loudest * 0.5 : 0);
+  }
+
+  /** Peel a slice off the end of the ingredient: the whole shrinks and a disc slides away from the knife. */
+  private cutSlice(item: Item, color: number, q: number): void {
+    const n = item.cook.chopHits;
+    item.visual.scale.x = Math.max(0.35, 1 - n * 0.12);
+    item.visual.position.x = -0.02 * n;
+    const list = this.slices.get(item.id) ?? [];
+    const geo = new THREE.CylinderGeometry(0.035, 0.035, 0.012, 16);
+    // A clean cut is a neat round disc; a sloppy one is a mangled wedge.
+    if (q < 0.4) geo.scale(1.3, 1.6, 0.6);
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+    m.rotation.z = Math.PI / 2 + (Math.random() - 0.5) * (q < 0.4 ? 1.2 : 0.2);
+    const base = this.restPos('board');
+    m.position.set(base.x + 0.07 + n * 0.018, COUNTER_TOP + 0.06, base.z + (Math.random() - 0.5) * 0.03);
+    m.castShadow = true;
+    this.scene.add(m);
+    list.push(m);
+    this.slices.set(item.id, list);
+  }
+
+  private clearSlices(item: Item): void {
+    item.visual.scale.x = 1;
+    item.visual.position.x = 0;
+    for (const m of this.slices.get(item.id) ?? []) {
+      this.scene.remove(m);
+      m.geometry.dispose();
+    }
+    this.slices.delete(item.id);
   }
 
   /** Feed mouse input to the station currently being worked. Returns the hand action 0..1 for animation. */
@@ -341,14 +454,20 @@ export class Stations {
         this.chopArmed = false;
         const phase = (this.time % BEAT) / BEAT;
         const dist = Math.min(phase, 1 - phase);
-        const q = Math.max(0, Math.min(1, 1 - Math.max(0, dist - 0.07) * 2.6));
+        let q = Math.max(0, Math.min(1, 1 - Math.max(0, dist - 0.07) * 2.6));
+        if (this.mittsOn) q *= 0.45;
         item.cook.chopHits++;
         item.cook.chopScoreSum += q;
         const col = INGREDIENTS[item.kind as keyof typeof INGREDIENTS].raw;
         this.particles.emit(item.group.position.clone().setY(COUNTER_TOP + 0.08), { color: col, count: q < 0.4 ? 14 : 5, up: q < 0.4 ? 2.2 : 0.8, speed: q < 0.4 ? 1.4 : 0.4, gravity: 6, life: 1.2, size: 0.05 });
-        audio.play(q < 0.4 ? 'chopMiss' : 'chop', { pos: item.group.position, pitch: 0.9 + Math.random() * 0.2 });
+        // On-beat cuts build a streak that raises the pitch, so a clean rhythm sounds great.
+        this.chopStreak = q >= 0.75 ? this.chopStreak + 1 : 0;
+        audio.play(q < 0.4 ? 'chopMiss' : 'chop', { pos: item.group.position, pitch: 0.9 + Math.random() * 0.1 + Math.min(4, this.chopStreak) * 0.06, volume: q >= 0.75 ? 1 : 0.8 });
+        if (q >= 0.75) audio.play('clang', { pos: item.group.position, volume: 0.12, pitch: 2.2 + this.chopStreak * 0.1 });
+        this.cutSlice(item, col, q);
         this.events.chop(q, item);
         if (item.cook.chopHits >= CHOPS_NEEDED) {
+          this.clearSlices(item);
           item.setChopped();
           item.drive(this.restPos('board'));
           this.events.chopDone(item, item.cook.chopScoreSum / item.cook.chopHits);

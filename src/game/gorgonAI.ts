@@ -14,7 +14,25 @@ export type GorgonState =
   | 'stunned'
   | 'toSabotage'
   | 'sabotage'
+  | 'toInvestigate'
+  | 'investigate'
   | 'scripted';
+
+export type WrathStage = 'Calm' | 'Irritated' | 'Furious' | 'Petrifying Rage';
+
+/** How each Wrath stage changes Gorgon. Thresholds are the minimum Wrath for that stage. */
+export const WRATH_STAGES: { stage: WrathStage; min: number; interval: number; inspect: number; gaze: number; sabotage: number; speed: number; hearing: number }[] = [
+  { stage: 'Calm', min: 0, interval: 1.4, inspect: 1, gaze: 0.4, sabotage: 0, speed: 0.85, hearing: 5 },
+  { stage: 'Irritated', min: 30, interval: 1.0, inspect: 1.6, gaze: 0.8, sabotage: 0, speed: 1, hearing: 7 },
+  { stage: 'Furious', min: 60, interval: 0.75, inspect: 1.2, gaze: 1.3, sabotage: 1, speed: 1.2, hearing: 9 },
+  { stage: 'Petrifying Rage', min: 85, interval: 0.55, inspect: 0.6, gaze: 2.2, sabotage: 1, speed: 1.35, hearing: 12 },
+];
+
+export function wrathStage(wrath: number): (typeof WRATH_STAGES)[number] {
+  let s = WRATH_STAGES[0];
+  for (const x of WRATH_STAGES) if (wrath >= x.min) s = x;
+  return s;
+}
 
 export interface RoundTemper {
   interval: number; // base seconds between interruptions at zero wrath
@@ -41,6 +59,8 @@ export interface GorgonWorld {
   subtitle(text: string, seconds: number): void;
   shake(amount: number): void;
   stat(name: 'gazesSurvived' | 'reflects' | 'gazesCaught'): void;
+  /** Dropped food lying on the floor within r metres of p. */
+  messNear(p: THREE.Vector3, r: number): number;
 }
 
 const tmp = new THREE.Vector3();
@@ -69,6 +89,14 @@ export class GorgonAI {
   /** Seconds left in a dropped-food meltdown. */
   private tantrumT = 0;
   private tantrumBeat = 0;
+  private stageIdx = 0;
+  private hearCd = 0;
+  private noiseAt = new THREE.Vector3();
+  /** Would the gaze hit the player right now, and why not? For the HUD warning. */
+  gazeSafe = true;
+  gazeReason = '';
+  /** Wrath stage name for the HUD. */
+  stage: WrathStage = 'Calm';
   private speakingUntil = 0;
   private clock = 0;
   private hissT = 4;
@@ -106,6 +134,24 @@ export class GorgonAI {
     this.faceToward(this.world.playerEye());
     this.say('dropped', 2);
     audio.play('hiss', { pos: this.eye(), volume: 1 });
+    return true;
+  }
+
+  /**
+   * A noise in the kitchen (food hitting the floor, a clang). If he's free and it's within earshot,
+   * he stops, shouts and storms over to see. Whatever mess is there when he arrives sets him off.
+   */
+  hear(at: THREE.Vector3, loudness = 1): boolean {
+    if (this.state !== 'patrol' || this.tantrumT > 0 || this.hearCd > 0) return false;
+    const range = wrathStage(this.world.wrath()).hearing * loudness;
+    if (at.distanceTo(this.pos) > range) return false;
+    this.hearCd = 6;
+    this.noiseAt.copy(at).setY(0);
+    this.set('toInvestigate');
+    this.path = [];
+    this.faceToward(at);
+    this.say('whatWasThat', 2);
+    audio.play('hiss', { pos: this.eye(), volume: 0.8 });
     return true;
   }
 
@@ -220,12 +266,12 @@ export class GorgonAI {
 
   private startInterruption(): void {
     const t = this.temper!;
-    const w = this.world.wrath() / 100;
+    const st = wrathStage(this.world.wrath());
     const options: [GorgonState, number][] = [
-      ['toInspect', t.inspect],
-      ['gazeWindup', t.gaze * (0.7 + w)],
-      // At most one sabotage every 40 seconds.
-      ['toSabotage', this.clock - this.lastSabotage < 40 ? 0 : t.sabotage * (0.5 + w)],
+      ['toInspect', t.inspect * st.inspect],
+      ['gazeWindup', t.gaze * st.gaze],
+      // Sabotage only once he's Furious, and at most once every 40 seconds.
+      ['toSabotage', this.clock - this.lastSabotage < 40 ? 0 : t.sabotage * st.sabotage],
     ];
     const total = options.reduce((a, o) => a + o[1], 0);
     let r = Math.random() * total;
@@ -269,8 +315,13 @@ export class GorgonAI {
 
   private wander(): void {
     const keys = ['southE', 'southM', 'southW', 'west', 'backW', 'backM', 'backC', 'backE', 'east'];
-    const k = keys[Math.floor(Math.random() * keys.length)];
-    this.walkTo(this.wp.nodes[k], 0.8);
+    let k = keys[Math.floor(Math.random() * keys.length)];
+    // Once irritated he paces close to you, breathing down your neck.
+    if (this.stageIdx >= 1 && Math.random() < 0.4 + this.stageIdx * 0.15) {
+      const pp = this.world.playerPos();
+      k = keys.slice().sort((a, b) => this.wp.nodes[a].distanceTo(pp) - this.wp.nodes[b].distanceTo(pp))[Math.floor(Math.random() * 2)];
+    }
+    this.walkTo(this.wp.nodes[k], 0.8 * wrathStage(this.world.wrath()).speed);
   }
 
   update(dt: number): void {
@@ -279,6 +330,18 @@ export class GorgonAI {
     const t = this.temper;
     const w = this.world.wrath() / 100;
     this.anger += (Math.max(w, this.state === 'gaze' ? 1 : 0) - this.anger) * Math.min(1, dt * 2);
+    this.hearCd -= dt;
+    const st = wrathStage(this.world.wrath());
+    const idx = WRATH_STAGES.indexOf(st);
+    if (idx !== this.stageIdx) {
+      // Announce climbing a stage so the player always knows why he's suddenly worse.
+      if (idx > this.stageIdx && this.temper) {
+        this.say(idx === 1 ? 'stageIrritated' : idx === 2 ? 'stageFurious' : 'stageRage', 2);
+        audio.play('hiss', { pos: this.eye(), volume: 1 });
+      }
+      this.stageIdx = idx;
+      this.stage = st.stage;
+    }
 
     let pose: GorgonPose = 'idle';
     let lookAt: THREE.Vector3 | null = null;
@@ -289,7 +352,7 @@ export class GorgonAI {
         break;
       case 'patrol':
         if (!t) break;
-        this.nextEvent -= dt;
+        if (!this.watching) this.nextEvent -= dt;
         this.nextHurry -= dt;
         if (this.path.length === 0) this.wander();
         if (this.nextHurry <= 0) {
@@ -297,7 +360,7 @@ export class GorgonAI {
           this.say('hurry', 1);
         }
         if (this.nextEvent <= 0) {
-          this.nextEvent = THREE.MathUtils.lerp(t.interval, t.interval * 0.45, w) * (0.8 + Math.random() * 0.4);
+          this.nextEvent = t.interval * st.interval * (0.8 + Math.random() * 0.4);
           this.startInterruption();
         }
         lookAt = Math.random() < 0.5 ? eyeP : null;
@@ -330,6 +393,7 @@ export class GorgonAI {
       case 'gazeWindup': {
         const windup = t?.windup ?? 1.8;
         this.glow = Math.min(1, this.stateT / windup);
+        this.checkCover();
         this.faceToward(eyeP);
         pose = 'gaze';
         lookAt = eyeP;
@@ -347,6 +411,7 @@ export class GorgonAI {
         lookAt = eyeP;
         this.faceToward(eyeP);
         this.updateGaze(dt);
+        this.checkCover();
         if (this.state === 'gaze' && this.stateT > 2.6) {
           this.gazing = false;
           this.glow = 0;
@@ -375,6 +440,34 @@ export class GorgonAI {
         }
         if (this.stateT > 2) this.backToPatrol();
         break;
+      case 'toInvestigate':
+        // A beat of stillness while he turns toward the noise, then he storms over.
+        if (this.stateT < 0.9) {
+          pose = 'yell';
+          this.faceToward(this.noiseAt);
+        } else if (!this.path.length && !this.onArrive) {
+          const spot = this.noiseAt.clone();
+          this.walkTo(spot, 1.5 * wrathStage(this.world.wrath()).speed, () => this.set('investigate'));
+        }
+        lookAt = this.noiseAt.clone().setY(0.3);
+        break;
+      case 'investigate': {
+        pose = this.stateT < 1.2 ? 'armsCrossed' : 'point';
+        lookAt = this.noiseAt.clone().setY(0.2);
+        if (this.stateT > 1.2 && this.stateT - dt <= 1.2) {
+          const mess = this.world.messNear(this.noiseAt, 1.6);
+          if (mess > 0) {
+            this.set('patrol');
+            this.world.addWrath(4 + 4 * Math.min(3, mess));
+            this.tantrum();
+          } else {
+            this.say('investigateNothing', 2);
+            this.world.addWrath(3);
+          }
+        }
+        if (this.state === 'investigate' && this.stateT > 3) this.backToPatrol();
+        break;
+      }
       case 'scripted':
         pose = this.pose;
         lookAt = this.lookAt;
@@ -453,6 +546,17 @@ export class GorgonAI {
     this.rig.update(dt, { pose, speed: walking ? 1.6 * this.speedMul : 0, talking: this.talking, lookAt });
   }
 
+  /** Live read of the player's cover, shown while the gaze charges and fires. */
+  private checkCover(): void {
+    const eyeG = this.eye();
+    const eyeP = this.world.playerEye();
+    const facing = this.world.playerForward().dot(eyeG.clone().sub(eyeP).normalize());
+    if (this.gazeFlags.reflected) [this.gazeSafe, this.gazeReason] = [true, 'Reflected!'];
+    else if (this.world.lineOfSightBlocked(eyeG, eyeP)) [this.gazeSafe, this.gazeReason] = [true, 'Hidden'];
+    else if (facing <= 0.64) [this.gazeSafe, this.gazeReason] = [true, 'Looking away'];
+    else [this.gazeSafe, this.gazeReason] = [false, 'In his sight'];
+  }
+
   private updateGaze(dt: number): void {
     const eyeG = this.eye();
     const eyeP = this.world.playerEye();
@@ -494,6 +598,19 @@ export class GorgonAI {
       }
     }
   }
+
+  /** Plating Mode: he hovers and judges instead of interrupting. Cancels a gaze that's winding up. */
+  watch(): void {
+    this.watching = true;
+    if (this.state === 'gazeWindup' || this.state === 'gaze') this.backToPatrol();
+    this.nextEvent = Math.max(this.nextEvent, 4);
+  }
+
+  resume(): void {
+    this.watching = false;
+  }
+
+  private watching = false;
 
   private backToPatrol(): void {
     this.gazing = false;

@@ -8,10 +8,10 @@ import type { PsxRenderer } from '../engine/renderer';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Hud } from '../ui/hud';
 import { GorgonAI, type GorgonWorld, type RoundTemper } from './gorgonAI';
-import { INGREDIENTS, ingredientMeshFactories } from './ingredients';
+import { INGREDIENTS, ingredientMeshFactories, type IngredientKind } from './ingredients';
 import { Interaction } from './interact';
 import { Items, type Item } from './items';
-import { buildKitchen, type Kitchen, type StationId } from './kitchen';
+import { buildKitchen, COUNTER_TOP, type Kitchen, type StationId } from './kitchen';
 import { pickLine, type LineKey } from './lines';
 import { Particles } from './particles';
 import { Player } from './player';
@@ -19,6 +19,9 @@ import { evaluateDish, RECIPES, type DishResult, type Recipe } from './recipes';
 import { Rivals } from './rivals';
 import { Stations, type PlateId, type Ticket } from './stations';
 import { buildObjectives } from './objectives';
+import { PlatingMode, type PlatingResult } from './plating';
+import { PlatingHud } from '../ui/platingHud';
+import { gradeFor } from './recipes';
 
 interface RoundDef {
   name: string;
@@ -76,6 +79,11 @@ export class Game {
   private player!: Player;
   private hands!: HandsRig;
   private interact!: Interaction;
+  private plating!: PlatingMode;
+  private platingHud = new PlatingHud();
+  /** Plating scores waiting to be folded into the dish score when the plate is served. */
+  private platingDone = new Map<PlateId, PlatingResult>();
+  private pendingServe: PlateId[] = [];
 
   private phase: Phase = 'title';
   private paused = false;
@@ -96,7 +104,7 @@ export class Game {
   private thrownHits = new Set<number>();
   private bossRivalDone = false;
   private reactCd = 0;
-  private stats = { dropped: 0, gazesSurvived: 0, gazesCaught: 0, reflects: 0, fires: 0, thrown: 0, worst: '', worstScore: 101, insult: '' };
+  private stats = { dropped: 0, gazesSurvived: 0, gazesCaught: 0, reflects: 0, fires: 0, thrown: 0, plates: 0, worst: '', worstScore: 101, insult: '' };
 
   constructor(
     private renderer: PsxRenderer,
@@ -121,12 +129,21 @@ export class Game {
     this.items = new Items(this.scene, this.physics);
     this.items.onFloor = (it) => this.onFloor(it);
     this.items.onImpact = (it, s) => {
-      const soft = it.kind !== 'mirrorPan';
+      if (it.kind === 'plate' && s > 0.3) {
+        this.shatterPlate(it);
+        return;
+      }
+      const soft = it.isIngredient;
       audio.play(soft ? (Math.random() < 0.5 ? 'squish' : 'thud') : 'clang', { pos: it.group.position, volume: 0.25 + s * 0.75, pitch: 0.85 + Math.random() * 0.3 });
+      // Loud landings carry across the kitchen; a thrown item is a handy distraction.
+      if (this.phase === 'playing' && s > 0.45) this.gorgon.hear(it.group.position, 0.6 + s * 0.6);
     };
     this.stations = new Stations(this.scene, this.kitchen, this.items, this.particles, {
       chop: (q) => {
         if (q < 0.4) this.react('laugh', 0.25);
+        // A little camera kick sells the weight of a clean, on-beat cut.
+        this.player.shake = Math.max(this.player.shake, q >= 0.75 ? 0.32 : 0.18);
+        this.hud.cutFeedback(q >= 0.75 ? 'Perfect' : q >= 0.4 ? 'Good' : 'Sloppy');
       },
       chopDone: () => {},
       flip: () => {},
@@ -143,6 +160,16 @@ export class Game {
         this.gorgonSay('fire', false, 2);
         this.react('gasp', 1);
         music.sting('fail');
+      },
+      fireSpread: () => {
+        this.stats.fires++;
+        this.addWrath(10);
+        this.gorgonSay('fireSpread', false, 2);
+        this.react('gasp', 1);
+      },
+      fireOut: () => {
+        this.addWrath(-2);
+        this.react('applause', 0.5);
       },
       shakerLid: () => {
         this.addWrath(5);
@@ -167,7 +194,17 @@ export class Game {
       serve: (plates) => this.serve(plates),
       grabbed: () => {},
       thrown: () => {},
+      binned: (it) => this.binItem(it),
+      burnedHand: () => {
+        audio.play('chopMiss', { volume: 1, pitch: 1.6 });
+        audio.play('fireIgnite', { volume: 0.5, pitch: 1.4 });
+        this.flash = 0.6;
+        this.gorgonSay('burnedHand', false, 2);
+        this.react('laugh', 1);
+      },
+      spray: (from, dir, dt) => this.spray(from, dir, dt),
     });
+    this.plating = new PlatingMode(this.scene, this.kitchen, this.stations, this.player, (k) => this.gorgonSay(k, false, 1), () => this.wrath);
     this.hangMirrorPan();
     window.addEventListener('resize', () => {
       this.player.camera.aspect = this.renderer.aspect();
@@ -178,6 +215,8 @@ export class Game {
   }
 
   private hangMirrorPan(): void {
+    // Fire extinguisher stands on the counter beside the stove.
+    this.items.spawn('extinguisher', new THREE.Vector3(2.7, COUNTER_TOP + 0.05, -3.6));
     const pan = this.items.spawn('mirrorPan', this.kitchen.mirrorHook.clone());
     pan.setKinematic(true);
     pan.where = 'hook';
@@ -200,6 +239,8 @@ export class Game {
         return this.physics.raycast(from, d.normalize(), Math.max(0, len - 0.25), GROUP.STATIC | GROUP.STATUE) !== null;
       },
       mirrorAge: () => this.interact.mirrorAge(),
+      messNear: (p, r) =>
+        this.items.list.filter((it) => it.isIngredient && it.cook.floor && it.where === 'world' && it.group.position.distanceTo(p) < r).length,
       inspectHeld: () => {
         const h = this.interact.held;
         if (!h) return 'empty';
@@ -267,13 +308,18 @@ export class Game {
   private onFloor(it: Item): void {
     if (this.phase !== 'playing') return;
     this.stats.dropped++;
-    // Dropping food is the one thing he can't stand: a full meltdown and a big jump in Wrath.
-    if (this.gorgon.tantrum()) {
+    // Dropping food is the one thing he can't stand. If he sees it: instant meltdown.
+    // If not, he hears the splat and comes looking, so bin it before he gets there.
+    const eye = this.gorgon.eye();
+    const p = it.group.position.clone().setY(0.3);
+    const close = eye.distanceTo(p) < 7;
+    const d = p.clone().sub(eye);
+    const seen = close && this.physics.raycast(eye, d.clone().normalize(), Math.max(0, d.length() - 0.25), GROUP.STATIC | GROUP.STATUE) === null;
+    if (seen && this.gorgon.tantrum()) {
       this.addWrath(10);
       this.react('gasp', 0.8);
-    } else {
-      this.addWrath(5);
-      this.gorgonSay('dropped', false, 2);
+    } else if (!this.gorgon.hear(p, 1.2)) {
+      this.addWrath(2);
     }
     void it;
   }
@@ -323,6 +369,13 @@ export class Game {
       this.items.remove(it);
     }
     this.tickets = r.recipes.map((recipe, k) => ({ id: this.ticketId++, recipe, plate: (k === 0 ? 'plateA' : 'plateB') as PlateId, served: false, age: 0 }));
+    for (const id of [...this.stations.fires.keys()]) this.stations.douse(id, 99);
+    for (const it of this.shelfItems) if (it.where === 'world') this.items.remove(it);
+    this.stockShelf();
+    this.platingDone.clear();
+    this.plating.clearDecor();
+    this.stations.setPlate('plateA', false);
+    this.stations.setPlate('plateB', false);
     this.stations.assignTicket('plateA', this.tickets[0] ?? null);
     this.stations.assignTicket('plateB', this.tickets[1] ?? null);
     this.roundTime = r.seconds;
@@ -452,7 +505,27 @@ export class Game {
     this.gorgon.setScripted('laugh', this.player.camera.position);
     this.player.faceTarget = this.gorgon.eye();
     const line = pickLine('petrified');
-    await this.wait(this.gorgon.say(line, 3, true) + 0.5);
+    const talk = this.gorgon.say(line, 3, true);
+    // Frozen solid mid-pose... a wobble... then you topple over like a garden statue.
+    await this.wait(0.9);
+    audio.play('stoneCrack', { volume: 0.8 });
+    for (let i = 0; i < 4; i++) {
+      this.player.shake = 0.25;
+      await this.wait(0.12);
+    }
+    this.player.faceTarget = null;
+    const t0 = this.time;
+    while (this.time - t0 < 1.1) {
+      this.player.topple = Math.min(1, (this.time - t0) / 1.1);
+      await this.wait(0);
+    }
+    this.player.topple = 1;
+    audio.play('slam', { volume: 1 });
+    audio.play('stoneCrack', { volume: 1, pitch: 0.7 });
+    this.player.shake = 1;
+    this.particles.emit(this.player.position.clone().setY(0.3), { color: 0x9a948a, count: 30, up: 1.5, speed: 1.6, gravity: 6, life: 1.4, size: 0.06 });
+    this.react('laugh', 1);
+    await this.wait(Math.max(1.5, talk - 1.5) + 0.8);
     this.finish(false, line);
   }
 
@@ -473,6 +546,7 @@ export class Game {
     rows.push(['Gazes survived', `${this.stats.gazesSurvived}`]);
     rows.push(['Gazes reflected', `${this.stats.reflects}`]);
     rows.push(['Kitchen fires', `${this.stats.fires}`]);
+    rows.push(['Plates smashed', `${this.stats.plates}`]);
     rows.push(['Food thrown at Gorgon', `${this.stats.thrown}`]);
     if (this.stats.worst) rows.push(['Worst moment', this.stats.worst]);
     const screen = this.hud.endScreen({ won, title: won ? 'You Survived' : 'Petrified', quote, stars, rows });
@@ -487,13 +561,29 @@ export class Game {
   }
 
   private serve(plates: PlateId[]): void {
-    if (this.phase !== 'playing') return;
+    if (this.phase !== 'playing' || this.plating.active) return;
     let servedAny = false;
+    let toPlate: PlateId | null = null;
     for (const p of plates) {
       const t = this.stations.plates[p].ticket;
       if (!t || t.served || this.stations.occupant[p].length === 0) continue;
+      // A complete dish gets plated before it goes out; an incomplete one is served as-is.
+      if (this.stations.isFull(p) && !this.platingDone.has(p)) {
+        toPlate ??= p;
+        continue;
+      }
       const plated = this.stations.collectPlate(p);
       const result = evaluateDish(t.recipe, plated);
+      const pr = this.platingDone.get(p);
+      if (pr) {
+        this.platingDone.delete(p);
+        this.plating.clearDecor();
+        result.score = Math.round(result.score * 0.8 + pr.score * 0.2);
+        result.grade = gradeFor(result.score);
+        if (result.grade === 'Perfect') result.issue = 'perfect';
+        else if (result.grade === 'Good' && result.issue === 'perfect') result.issue = 'good';
+        result.breakdown.push(`plating: ${pr.grade}`);
+      }
       t.served = true;
       servedAny = true;
       this.results.push({ recipe: t.recipe, result });
@@ -527,8 +617,34 @@ export class Game {
         music.sting('fail');
       }
     }
+    if (toPlate) {
+      this.startPlating(toPlate, plates);
+      return;
+    }
     if (!servedAny) this.gorgonSay('emptyPlate', false, 2);
     else if (this.tickets.every((t) => t.served)) this.roundDone?.();
+  }
+
+  private startPlating(p: PlateId, plates: PlateId[]): void {
+    const t = this.stations.plates[p].ticket!;
+    this.pendingServe = plates;
+    this.interact.reset();
+    this.plating.start(p, t, !!ROUNDS[this.roundIndex].boss);
+    this.gorgon.watch();
+    this.gorgonSay('platingStart', false, 2);
+  }
+
+  /** Close Plating Mode; serve the dish unless the round ended underneath us. */
+  private endPlating(serveAfter: boolean): void {
+    const plate = this.plating.plate;
+    const r = this.plating.finish();
+    this.platingDone.set(plate, r);
+    this.platingHud.result(r);
+    this.gorgon.resume();
+    audio.play(r.score >= 75 ? 'ding' : 'plate', { volume: 0.7 });
+    if (r.score >= 90) this.gorgonSay('platingGreat', false, 2);
+    else if (r.score < 40) this.gorgonSay('platingBad', false, 2);
+    if (serveAfter) this.serve(this.pendingServe);
   }
 
   // ---------- per frame ----------
@@ -573,7 +689,10 @@ export class Game {
     if (playing) {
       this.roundTime -= dt;
       for (const t of this.tickets) t.age += dt;
-      if (this.roundTime <= 0) this.roundDone?.();
+      if (this.roundTime <= 0) {
+        if (this.plating.active) this.endPlating(false);
+        this.roundDone?.();
+      }
       // Final rival falls mid-way through the boss round.
       const r = ROUNDS[this.roundIndex];
       if (r.boss && !this.bossRivalDone && this.roundTime < r.seconds * 0.55 && this.gorgon.state === 'patrol') {
@@ -586,11 +705,19 @@ export class Game {
       }
     }
 
-    const working = this.interact.working !== null;
+    const working = this.interact.working !== null || this.plating.active;
     this.player.moveEnabled = playing && !working;
     this.player.lookEnabled = playing ? !working : this.phase !== 'dead';
+    // The key or click that ends plating must not also reach the interaction system this frame.
+    let platingFrame = this.plating.active;
+    if (this.plating.active) {
+      if (!playing || this.plating.update(dt, this.input) === 'done') this.endPlating(playing);
+      else platingFrame = true;
+    }
     this.player.update(dt, this.input);
-    this.interact.update(dt, this.input, playing);
+    this.interact.update(dt, this.input, playing && !platingFrame);
+    this.platingHud.show(this.plating.active ? this.plating.view() : null);
+    this.platingHud.update(dt, this.plating.active);
 
     this.acc += dt;
     while (this.acc >= 1 / 60) {
@@ -598,6 +725,14 @@ export class Game {
       this.acc -= 1 / 60;
     }
     this.items.update();
+    this.checkTrashToss();
+    this.updateShelf(dt, playing);
+    if ((this.sprayT -= dt) <= 0 && this.sprayLoop) {
+      this.sprayLoop.stop();
+      this.sprayLoop = null;
+    }
+    // An open fire keeps him boiling.
+    if (playing && this.stations.fires.size) this.addWrath(dt * 1.2 * this.stations.fires.size);
     this.stations.update(dt);
     this.gorgon.update(dt);
     this.rivals.setMood(this.gorgon.gazing || this.gorgon.state === 'gazeWindup');
@@ -624,6 +759,14 @@ export class Game {
     if (this.roundIndex >= 0) this.hud.setRound(ROUNDS[this.roundIndex].name, this.roundTime);
     else this.hud.setRound('Hex Kitchen', 0);
     this.hud.setMeters(this.wrath, this.petrify);
+    const gs = this.gorgon.state;
+    this.hud.setGazeWarning({
+      phase: playing && gs === 'gazeWindup' ? 'windup' : playing && gs === 'gaze' ? 'gaze' : 'none',
+      charge: this.gorgon.glow,
+      safe: this.gorgon.gazeSafe,
+      reason: this.gorgon.gazeReason,
+    });
+    this.hands.root.visible = !this.plating.active;
     this.hud.setTickets(this.tickets, (t) => {
       const filled = new Set<string>();
       for (const s of this.stations.plates[t.plate].slots) if (s.item) filled.add(s.kind);
@@ -634,6 +777,100 @@ export class Game {
     this.hud.setPrompt(this.interact.prompt, !!tgt);
     const gaugeStation = this.interact.working ?? (tgt?.type === 'station' ? tgt.id : tgt?.type === 'item' ? tgt.station : null);
     this.hud.setGauge(playing && gaugeStation ? this.stations.gauge(gaugeStation) : null);
+  }
+
+  /** Ceramic meets floor: shards everywhere, a crash the whole kitchen hears. */
+  private shatterPlate(it: Item): void {
+    const p = it.group.position.clone();
+    audio.play('clang', { pos: p, volume: 1, pitch: 1.8 });
+    audio.play('stoneCrack', { pos: p, volume: 0.9, pitch: 1.6 });
+    this.particles.emit(p.clone().setY(Math.max(0.05, p.y)), { color: 0xf6f3ec, count: 28, up: 1.8, speed: 1.8, gravity: 9, life: 1.6, size: 0.04 });
+    this.player.shake = Math.max(this.player.shake, 0.3);
+    this.items.remove(it);
+    this.stats.plates++;
+    if (this.phase === 'playing') {
+      this.addWrath(4);
+      if (!this.gorgon.hear(p, 2)) this.gorgonSay('plateSmash', false, 2);
+      this.react('gasp', 0.8);
+    }
+  }
+
+  private sprayLoop: LoopHandle | null = null;
+  private sprayT = 0;
+
+  /** Fire extinguisher: a white jet that knocks down any fire it's pointed at. */
+  private spray(from: THREE.Vector3, dir: THREE.Vector3, dt: number): void {
+    this.sprayT = 0.15;
+    this.particles.emit(from, { color: 0xf4f6f8, count: 4, speed: 0.25, up: 0.1, gravity: 1.5, life: 0.7, jitter: 0.02, size: 0.06, push: dir.clone().multiplyScalar(4.5) });
+    if (!this.sprayLoop) this.sprayLoop = audio.loop('fryer', { volume: 0.7 });
+    for (const id of [...this.stations.fires.keys()]) {
+      const at = this.kitchen.stations[id].clone().setY(COUNTER_TOP + 0.15);
+      const to = at.clone().sub(from);
+      if (to.length() < 3.4 && to.normalize().dot(dir) > 0.9) this.stations.douse(id, dt * 0.9);
+    }
+  }
+
+  private shelfItems: Item[] = [];
+  private shelfWobble = 0;
+  private shelfDown = false;
+
+  /** Restock the storage shelf with a random mix of ingredients (start of each round). */
+  private stockShelf(): void {
+    const kinds: IngredientKind[] = ['potato', 'tomato', 'mushroom', 'pasta', 'bread', 'lettuce'];
+    this.shelfItems = this.kitchen.shelf.spots.map((p, i) => this.items.spawn(kinds[(i + this.roundIndex) % kinds.length], p.clone()));
+    this.shelfDown = false;
+  }
+
+  /** Sprinting into the shelf (or hitting it with a thrown item) brings the whole lot down. */
+  private updateShelf(dt: number, playing: boolean): void {
+    const sh = this.kitchen.shelf;
+    if (playing && !this.shelfDown) {
+      const p = this.player.position;
+      const d = Math.hypot(p.x - sh.front.x, p.z - sh.front.z);
+      const speed = this.player.speed;
+      const hitByThrow = this.items.list.some((it) => it.where === 'world' && !this.shelfItems.includes(it) && it.group.position.distanceTo(sh.group.position.clone().setY(1)) < 0.8 && it.body.linvel().x < -2);
+      if ((d < 0.75 && speed > 6.8) || hitByThrow) this.topplShelf(p);
+    }
+    if (this.shelfWobble > 0) {
+      this.shelfWobble = Math.max(0, this.shelfWobble - dt);
+      sh.group.rotation.x = Math.sin(this.shelfWobble * 30) * this.shelfWobble * 0.12;
+      sh.group.rotation.z = -Math.sin(this.shelfWobble * 22) * this.shelfWobble * 0.06;
+    }
+  }
+
+  private topplShelf(from: THREE.Vector3): void {
+    this.shelfDown = true;
+    this.shelfWobble = 1.2;
+    audio.play('clang', { pos: this.kitchen.shelf.group.position, volume: 1, pitch: 0.7 });
+    audio.play('slam', { pos: this.kitchen.shelf.group.position, volume: 0.8 });
+    this.player.shake = Math.max(this.player.shake, 0.4);
+    for (const it of this.shelfItems) {
+      if (it.where !== 'world') continue;
+      const out = it.group.position.clone().sub(from).setY(0).normalize();
+      it.body.setLinvel({ x: 1.2 + Math.random() * 1.5 + out.x * 0.5, y: 1 + Math.random() * 1.5, z: (Math.random() - 0.5) * 2.5 }, true);
+      it.body.setAngvel({ x: Math.random() * 8, y: Math.random() * 8, z: Math.random() * 8 }, true);
+    }
+    this.react('gasp', 1);
+  }
+
+  /** Drop an item into the trash can: gone, no evidence. */
+  private binItem(it: Item): void {
+    audio.play('thud', { pos: this.kitchen.trash, volume: 0.6, pitch: 0.7 });
+    this.particles.emit(this.kitchen.trash.clone().setY(0.75), { color: 0x555555, count: 6, up: 0.6, speed: 0.4, gravity: 4, life: 0.5 });
+    this.items.remove(it);
+  }
+
+  /** Food tossed into the can's mouth counts as binned too. */
+  private checkTrashToss(): void {
+    const c = this.kitchen.trash;
+    for (const it of this.items.list) {
+      if (it.where !== 'world' || it.kind === 'mirrorPan') continue;
+      const p = it.group.position;
+      if (p.y > 0.25 && p.y < 0.75 && Math.hypot(p.x - c.x, p.z - c.z) < 0.22) {
+        this.binItem(it);
+        return;
+      }
+    }
   }
 
   private shadowScan = 0;
