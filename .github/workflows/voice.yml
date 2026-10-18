@@ -1,7 +1,7 @@
 name: Generate Gorgon voice
 
 # Renders Gorgon's lines with ElevenLabs whenever the lines or the voice change, commits the
-# MP3s to public/voice, then redeploys Pages (pushes made with GITHUB_TOKEN don't trigger other workflows).
+# MP3s to public/voice, then dispatches the Pages workflow (pushes made with GITHUB_TOKEN don't trigger it).
 # Needs the repository secret ELEVENLABS_API_KEY and a voiceId in voice.config.json.
 on:
   push:
@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: voice-${{ github.ref }}
@@ -49,13 +50,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Regenerate Gorgon voice lines"
           git push
-      - name: Build
+      - name: Redeploy Pages
         if: steps.cfg.outputs.ready == 'true'
-        run: npm ci && npm run build && touch dist/.nojekyll
-      - name: Deploy to gh-pages
-        if: steps.cfg.outputs.ready == 'true'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: dist
-          force_orphan: true
+        # Hand off to the Pages workflow so there's only ever one gh-pages deploy at a time,
+        # and it builds the branch head including the audio committed above.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref "${{ github.ref_name }}"
